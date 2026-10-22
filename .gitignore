@@ -4,3 +4,8 @@
 .httr-oauth
 .DS_Store
 .quarto
+#below command prevents any csv filed to be pushed to git
+*.csv
+#below command prevents any excel filed to be pushed to git
+*.xls
+*.xlsx
