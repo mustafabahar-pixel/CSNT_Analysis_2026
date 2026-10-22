@@ -1,6 +1,15 @@
+#the order of below doesn't matter
+#can also specify specific file names or general file formats/types
+#specific file names to be ignored:
 .Rproj.user
 .Rhistory
 .RData
 .httr-oauth
 .DS_Store
 .quarto
+#general file types to be ignored (requires asterisks)
+#below command prevents any csv filed to be pushed to git
+*.csv
+#below command prevents any excel filed to be pushed to git
+*.xls
+*.xlsx
