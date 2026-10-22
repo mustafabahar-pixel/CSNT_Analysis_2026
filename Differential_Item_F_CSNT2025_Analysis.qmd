@@ -1,0 +1,3246 @@
+---
+title: "CSNT_DIF_AI_2025_Analysis"
+format:
+  html:
+    theme: flatly # Clean light background with high contrast dark text
+    toc: true
+    df-print: paged # Clean interactive paged tables
+---
+
+```{=html}
+<style>
+  /* Clean white background and sharp black text for all tables */
+  table, .table, .pagedtable, table *, .table *, .pagedtable * {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+  }
+  
+  /* Plain black table headers with subtle bottom border */
+  th, .table th, .pagedtable-header {
+    background-color: #ffffff !important;
+    color: #000000 !important;
+    font-weight: bold !important;
+    border-bottom: 2px solid #000000 !important;
+  }
+
+  /* Table body cell borders for crisp gridlines */
+  td, .table td {
+    border-bottom: 1px solid #e0e0e0 !important;
+  }
+
+  /* Clean white background and dark text for console output boxes */
+  pre.code-output, div.cell-output-stdout pre, div.cell-output-stderr pre {
+    background-color: #f8f9fa !important;
+    color: #111111 !important;
+    border: 1px solid #cccccc !important;
+  }
+</style>
+```
+
+------------------------------------------------------------------------
+
+### dt tables have a good look for the analysis
+
+## Loading necessary libraries
+
+```{r}
+#| message: false
+#| warning: false
+library(readxl)
+library(tidyverse)
+library(writexl)
+library(matrixStats)
+library(DT)
+library(mirt)
+library(openxlsx)
+library(dplyr)
+library(knitr)
+library(stringr)
+library(WrightMap)
+library(latticeExtra)
+library(summarytools)
+```
+
+# 1. Data Preparation
+
+### 1.a Data preparation before the analysis
+
+Change the file path to your dataset address. Next, Data without 'timecompleted' are dropped
+
+```{r}
+CSNT_Complete_Item_Diversity_Scored <- read_excel("~/Documents/R Studio Work/Csnt Analysis All_Data/CSNT_Complete_Item_Diversity_Scored.xlsx")
+CSNT_Complete_Item_Diversity_Scored <- CSNT_Complete_Item_Diversity_Scored %>%
+drop_na(timecompleted)
+
+write_xlsx(CSNT_Complete_Item_Diversity_Scored, "CSNT_Complete_Item_Diversity_ScoredClean.xlsx")
+CSNT_Complete_Item_Diversity_ScoredClean <- CSNT_Complete_Item_Diversity_Scored[, !colAlls(is.na(CSNT_Complete_Item_Diversity_Scored))]
+
+CSNT_All_Grade_Type <- read.csv("~/Documents/R Studio Work/CSNT Item Diversity All Data/CSNT_All_Grade_Type.csv")
+View(CSNT_All_Grade_Type)
+```
+
+(Added variables from the Otap_Vac table to get the grades and applicant types: Merge datasets based on fielddata). Data is merged here
+
+```{r}
+# 2. MERGE ON 'fileddata' KEY
+# Option B: If reading directly from Excel files in your working directory
+df1 <- CSNT_Complete_Item_Diversity_ScoredClean
+df2 <- CSNT_All_Grade_Type
+
+# 2. MERGE ON 'fileddata' KEY
+# ===========================================================================
+# Ensures key columns are formatted as characters to prevent type mismatch
+CSNT_Complete_Diversity_Test_Merged <- df1 %>%
+  mutate(fileddata = as.character(fielddata)) %>%
+  left_join(
+    df2 %>% mutate(fileddata = as.character(fielddata)),
+    by = "fileddata"
+  )
+
+
+# 3. DISPLAY MERGED RESULTS
+# ===========================================================================
+# Summary notification
+cat("Merge Complete: Joined", nrow(CSNT_Complete_Diversity_Test_Merged), "rows on key 'fileddata'.\n\n")
+
+# Preview first 10 rows of the merged data frame
+kable(head(CSNT_Complete_Diversity_Test_Merged, 10), caption = "Merged Dataset Preview (Key: fileddata)")
+```
+
+## 1.b. Creating annual dataset -2025
+
+```{r}
+
+temp<- CSNT_Complete_Diversity_Test_Merged 
+temp$timecompleted<-as.numeric(substr(temp$timecompleted, 1,4))
+CSNT_Complete_Item_Diversity_ScoredClean_2025<-filter(temp, timecompleted==2025)
+```
+
+### 1.b.1 Remove duplicate candidate instances based on 'timecompleted'
+
+```{r}
+CSNT_Complete_Item_Diversity_ScoredClean_2025 <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+arrange(timecompleted) %>%      # Sort dates in ascending order (earliest first)
+distinct(fielddata.x, .keep_all = TRUE) # Keep first occurrence per ID, retain all other columns
+sum(duplicated(CSNT_Complete_Item_Diversity_ScoredClean_2025$fielddata.x))
+```
+
+```{r}
+# Count matches vs. non-matches based on a column brought over from the right table (e.g., Difficulty_b)
+match_summary <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+  summarise(
+    Total_Rows       = n(),
+    Matched_Cases    = sum(!is.na(fielddata.x)),
+    Non_Matched_Cases = sum(is.na(fielddata.x)),
+    Match_Rate_Pct   = round(mean(!is.na(fielddata.x)) * 100, 2)
+  )
+
+# Display summary table
+knitr::kable(match_summary, caption = "Merge Reconciliation Summary")
+```
+
+```{r}
+CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+  filter(is.na(fielddata.x)) %>%
+  select(fielddata.x, timecompleted)
+```
+
+### 1.b.2 Documenting all items with complete missing values
+
+```{r}
+all_na_items <- colSums(!is.na(CSNT_Complete_Item_Diversity_ScoredClean_2025)) == 0
+names(CSNT_Complete_Item_Diversity_ScoredClean_2025)[all_na_items]
+
+all_na_cols <- colSums(!is.na(CSNT_Complete_Item_Diversity_ScoredClean_2025)) == 0
+cat("Number of completely empty items:", sum(all_na_cols), "\n")
+
+```
+
+### 1.b.3 Drop items with complete NA values
+
+```{r}
+CSNT_Complete_Item_Diversity_ScoredClean_2025 <- CSNT_Complete_Item_Diversity_ScoredClean_2025[, !colAlls(is.na(CSNT_Complete_Item_Diversity_ScoredClean_2025))]
+ncol(CSNT_Complete_Item_Diversity_ScoredClean_2025)
+```
+
+### 1.b.4 Check - Documenting all applicants with no responses
+
+```{r}
+all_na_persons <- rowSums(!is.na(CSNT_Complete_Item_Diversity_ScoredClean_2025)) == 0
+which(all_na_persons)
+
+```
+
+### 1.b.5 Select ONLY active items to evaluate test performance
+
+```{r}
+
+# 1. READ METADATA & GET ACTIVE ITEM NAMES
+item_metadata <- read_excel("~/Documents/R Studio Work/CSNT_Item_Usage_2026_All.xlsx")
+
+active_items_list <- item_metadata %>%
+  filter(Type == "Active") %>%
+  pull(ItemID)
+
+# 2. SUBSET MASTER DATA & ENFORCE VARIANCE FILTERING
+# ----------------------------------------------------------------------
+id_var <- "fielddata"
+
+# Extract active item columns from 2025 master dataset
+active_matrix_raw <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+  dplyr::select(any_of(active_items_list))
+
+# Calculate p-values (item means) to find zero-variance items
+item_p_values <- colMeans(active_matrix_raw, na.rm = TRUE)
+
+# Filter criteria: Non-NaN AND 0 < p-value < 1 (removes zero-variance items)
+valid_variance_cols <- !is.nan(item_p_values) & item_p_values > 0 & item_p_values < 1
+
+# Subset item matrix to active + non-zero variance items only
+clean_active_items2025 <- active_matrix_raw[, valid_variance_cols]
+
+cat("Active items requested:", length(active_items_list), "\n")
+cat("Active items retained (non-zero variance):", ncol(clean_active_items2025), "\n")
+cat("Zero-variance active items dropped:", sum(!valid_variance_cols), "\n")
+
+# 3. FILTER OUT PARTICIPANTS WITH NO RESPONSES ON ACTIVE ITEMS
+# ----------------------------------------------------------------------
+# Logical mask for participants with AT LEAST ONE response across active items
+valid_rows_active <- rowSums(!is.na(clean_active_items2025)) > 0
+
+# Extract pure matrix passed to mirt() (no IDs, no demographic cols)
+mirt_active_matrix <- clean_active_items2025[valid_rows_active, ]
+
+cat("Participants analyzed in mirt():", nrow(mirt_active_matrix), "\n")
+
+```
+
+Send updated merged file to excel for reference
+
+```{r}
+
+write.xlsx(CSNT_Complete_Diversity_Test_Merged, file = "CSNT_All_Diversity_Test_DataOct_26.xlsx")
+```
+
+## 2. Adverse Impact
+
+## Diversity Frequencies
+
+```{r}
+# 1. VERIFY DATA & DEFINE TARGET GRADES AND VARIABLES
+# ===========================================================================
+if (!exists("CSNT_Complete_Item_Diversity_ScoredClean_2025")) {
+  stop("CSNT_Complete_Item_Diversity_ScoredClean_2025 is not present in the workspace.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+diversity_vars <- c(
+  "gender",
+  "disability",
+  "application_form_applicant_type",
+  "select_your_ethnicity",
+  "what_is_your_sexual_orientation",
+  "select_your_ethnic_group",
+  "select_your_current_age_group",
+  "what_is_your_religion_or_belief",
+  "were_you_eligible_for_free_school_meals_at_any_point"
+)
+
+# Identify grade column name safely
+col_grade <- intersect(
+  c("job_grade_clean", "job_grade.x", "job_grade", "Job_Grade", "Grade"), 
+  colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025)
+)[1]
+
+# Verify all diversity variables exist in the dataset
+missing_vars <- setdiff(diversity_vars, colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025))
+if (length(missing_vars) > 0) {
+  warning("The following variables were not found in the dataset and will be skipped: ", paste(missing_vars, collapse = ", "))
+  diversity_vars <- intersect(diversity_vars, colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025))
+}
+
+# 2. COMPUTE FREQUENCIES FOR EACH GRADE & DIVERSITY VARIABLE
+# ===========================================================================
+grade_sheet_mapping <- list(
+  "Administrative Officer"   = "Admin Officer",
+  "Executive Officer"        = "Exec Officer",
+  "Higher Executive Officer" = "Higher Exec Officer",
+  "Senior Executive Officer" = "Senior Exec Officer",
+  "Grade 7"                  = "Grade 7",
+  "Grade 6"                  = "Grade 6"
+)
+
+wb <- createWorkbook()
+
+for (full_grade in target_grades) {
+  sheet_name <- grade_sheet_mapping[[full_grade]]
+  addWorksheet(wb, sheet_name)
+  
+  # Filter data for current grade
+  grade_df <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+    filter(.data[[col_grade]] == full_grade)
+  
+  start_row <- 1
+  
+  for (var_name in diversity_vars) {
+    # Compute frequency table including missing/NA/NULL values explicitly
+    var_freq <- grade_df %>%
+      mutate(Category = as.character(.data[[var_name]])) %>%
+      mutate(Category = ifelse(is.na(Category) | Category == "" | Category == "NULL", "Missing / Not Stated", Category)) %>%
+      group_by(Category) %>%
+      summarise(Frequency = n(), .groups = "drop") %>%
+      mutate(
+        Percentage = round(Frequency / sum(Frequency) * 100, 2),
+        Variable   = var_name
+      ) %>%
+      arrange(desc(Frequency)) %>%
+      select(Variable, Category, Frequency, Percentage)
+    
+    # Write header title for this variable section
+    writeData(wb, sheet_name, paste0("Variable: ", var_name), startRow = start_row, startCol = 1)
+    
+    # Write data frame table
+    writeData(wb, sheet_name, var_freq, startRow = start_row + 1, startCol = 1)
+    
+    # Add spacing between variable tables
+    start_row <- start_row + nrow(var_freq) + 4
+  }
+}
+
+# 3. SAVE WORKBOOK
+# ===========================================================================
+excel_filename <- "CSNT_Diversity_Group_Frequencies_by_Grade2025.xlsx"
+saveWorkbook(wb, excel_filename, overwrite = TRUE)
+cat("\nWorkbook successfully saved with separate sheets for each grade:", excel_filename, "\n")
+
+
+# 4. PREVIEW FREQUENCY TABLE IN QUARTO REPORT (E.G., ADMINISTRATIVE OFFICER)
+# ===========================================================================
+cat("### Sample Frequency Preview: Administrative Officer (Gender & Disability)\n")
+preview_df <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+  filter(.data[[col_grade]] == "Administrative Officer") %>%
+  select(gender, disability) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Category") %>%
+  mutate(Category = ifelse(is.na(Category) | Category == "" | Category == "NULL", "Missing / Not Stated", Category)) %>%
+  group_by(Variable, Category) %>%
+  summarise(Frequency = n(), .groups = "drop_last") %>%
+  mutate(Percentage = round(Frequency / sum(Frequency) * 100, 2))
+
+kable(preview_df, caption = "Frequency Breakdown Preview for Administrative Officer")
+```
+
+### A. GENDER
+
+```{r}
+# 1. VERIFY DATA & PREPARE DATASET
+# ================================================================
+if (!exists("CSNT_Complete_Item_Diversity_ScoredClean_2025")) {
+  stop("CSNT_Complete_Item_Diversity_ScoredClean_2025 is not present in the environment.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+# Detect grade column name safely
+col_grade <- intersect(c("job_grade_clean", "job_grade.x", "job_grade", "Job_Grade", "Grade"), colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025))[1]
+
+# Filter CSNT_Complete_Diversity_Test_Merged for target grades and Man vs. Woman only
+df_ai_prep <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+  filter(.data[[col_grade]] %in% target_grades) %>%
+  filter(gender %in% c("Man", "Woman")) %>%
+  filter(!is.na(NRTPercentileScore), !is.na(NRTtheta)) %>%
+  mutate(
+    Grade  = factor(.data[[col_grade]], levels = target_grades),
+    Gender = factor(gender, levels = c("Man", "Woman")),
+    Percentile = round(NRTPercentileScore) # Ensure clean integer percentiles 1..99
+  )
+
+
+# 2. CALCULATE ADVERSE IMPACT RATIO FOR EACH PERCENTILE (1 TO 99) BY GRADE
+# ================================================================
+# Step A: Get total candidates per grade x gender (for denominators)
+total_counts_per_grade <- df_ai_prep %>%
+  group_by(Grade) %>%
+  summarise(
+    Grand_Total_Man   = sum(Gender == "Man"),
+    Grand_Total_Woman = sum(Gender == "Woman"),
+    .groups           = "drop"
+  )
+
+# Step B: Count candidates at each exact percentile level (1 to 99)
+pct_counts <- df_ai_prep %>%
+  group_by(Grade, Percentile) %>%
+  summarise(
+    Count_Man         = sum(Gender == "Man"),
+    Count_Woman       = sum(Gender == "Woman"),
+    Mean_Theta_Man    = mean(NRTtheta[Gender == "Man"], na.rm = TRUE),
+    Mean_Theta_Woman  = mean(NRTtheta[Gender == "Woman"], na.rm = TRUE),
+    SD_Theta_Man      = sd(NRTtheta[Gender == "Man"], na.rm = TRUE),
+    SD_Theta_Woman    = sd(NRTtheta[Gender == "Woman"], na.rm = TRUE),
+    .groups           = "drop"
+  )
+
+# Step C: Compute Cumulative Selection Rates & Adverse Impact Ratios (>= Percentile)
+percentile_ai_summary <- pct_counts %>%
+  left_join(total_counts_per_grade, by = "Grade") %>%
+  arrange(Grade, desc(Percentile)) %>% # Sort descending to compute reverse cumulative sums
+  group_by(Grade) %>%
+  mutate(
+    # Cumulative candidates reaching or exceeding percentile P
+    Cum_Passed_Man   = cumsum(Count_Man),
+    Cum_Passed_Woman = cumsum(Count_Woman),
+    
+    # Cumulative Selection Rates
+    Cum_Rate_Man     = Cum_Passed_Man / Grand_Total_Man,
+    Cum_Rate_Woman   = Cum_Passed_Woman / Grand_Total_Woman,
+    
+    # Adverse Impact Ratio at this percentile cutoff (Woman / Man)
+    Adverse_Impact_Ratio = round(Cum_Rate_Woman / ifelse(Cum_Rate_Man == 0, NA, Cum_Rate_Man), 4),
+    
+    # 4/5ths Rule Status at this percentile
+    Status_4_5ths = ifelse(Adverse_Impact_Ratio < 0.80, "ADVERSE IMPACT (< 0.80)", "PASS (>= 0.80)"),
+    
+    # Effect Size (Cohen's d) for theta at this percentile level
+    Pooled_SD_Pct = sqrt((replace_na(SD_Theta_Man, 0)^2 + replace_na(SD_Theta_Woman, 0)^2) / 2),
+    Effect_Size_d = ifelse(Pooled_SD_Pct > 0, round((Mean_Theta_Woman - Mean_Theta_Man) / Pooled_SD_Pct, 4), 0)
+  ) %>%
+  arrange(Grade, Percentile) %>% # Re-sort back in standard 1..99 order
+  select(
+    Grade, Percentile, Count_Man, Count_Woman, 
+    Cum_Passed_Man, Cum_Passed_Woman, 
+    Cum_Rate_Man, Cum_Rate_Woman, 
+    Adverse_Impact_Ratio, Status_4_5ths, 
+    Mean_Theta_Man, Mean_Theta_Woman, Effect_Size_d
+  )
+
+
+
+# 3. DISPLAY PREVIEW TABLES IN QUARTO REPORT
+# ================================================================
+
+cat("\n### Percentile-Level Adverse Impact Preview (Administrative Officer: Percentiles 20 to 35)\n")
+ao_preview <- percentile_ai_summary %>% 
+  filter(Grade == "Administrative Officer", Percentile >= 20, Percentile <= 35)
+kable(ao_preview, caption = "Per-Percentile Counts, Cumulative Pass Rates, and AI Ratios")
+
+
+# 4. EXPORT TO WORKBOOK (.XLSX)
+# ================================================================
+wb <- createWorkbook()
+
+# Add sheets
+addWorksheet(wb, "Percentile Adverse Impact")
+
+# Write data
+writeData(wb, "Percentile Adverse Impact", percentile_ai_summary)
+
+# Save workbook
+saveWorkbook(wb, "CSNT_Gender_Adverse_Impact_by_Percentile.xlsx", overwrite = TRUE)
+cat("\nAnalysis saved to Excel file: CSNT_Gender_Adverse_Impact_by_Percentile.xlsx\n")
+```
+
+-   
+
+    ### B. Disability
+
+    ```{r}
+    # 1. VERIFY DATA & DETECT COLUMNS SAFELY
+    # ==============================================================================
+    if (!exists("CSNT_Complete_Item_Diversity_ScoredClean_2025")) {
+      stop("CSNT_Complete_Item_Diversity_ScoredClean_2025 is not present in the workspace.")
+    }
+
+    target_grades <- c(
+      "Administrative Officer",
+      "Executive Officer",
+      "Higher Executive Officer",
+      "Senior Executive Officer",
+      "Grade 7",
+      "Grade 6"
+    )
+
+    # Detect column names safely
+    col_grade <- intersect(c("job_grade_clean", "job_grade.x", "job_grade", "Job_Grade", "Grade"), colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025))[1]
+    col_disab <- intersect(c("disability", "Disability", "disability_status", "disability_clean"), colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025))[1]
+
+    if (is.na(col_disab)) {
+      stop("Could not detect a disability column! Available columns: ", paste(colnames(CSNT_Complete_Diversity_Test_Merged), collapse = ", "))
+    }
+
+    # Filter for target grades, disability == "No" or "Yes" only
+    df_disab_prep <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+      filter(.data[[col_grade]] %in% target_grades) %>%
+      filter(.data[[col_disab]] %in% c("No", "Yes")) %>%
+      filter(!is.na(NRTPercentileScore), !is.na(NRTtheta)) %>%
+      mutate(
+        Grade      = factor(.data[[col_grade]], levels = target_grades),
+        Disability = factor(.data[[col_disab]], levels = c("No", "Yes")),
+        Percentile = round(NRTPercentileScore) # Clean integer percentiles 1..99
+      )
+
+    # ==============================================================================
+    # 2. OVERALL GRADE SUMMARY AT DEFAULT 29th PERCENTILE CUTOFF
+    # ==============================================================================
+    summary_ai_disab <- df_disab_prep %>%
+      mutate(Pass = ifelse(NRTPercentileScore >= 29, 1, 0)) %>%
+      group_by(Grade, Disability) %>%
+      summarise(
+        Total_N         = n(),
+        Total_Passed    = sum(Pass),
+        Pass_Rate       = mean(Pass),
+        Mean_Theta      = mean(NRTtheta, na.rm = TRUE),
+        SD_Theta        = sd(NRTtheta, na.rm = TRUE),
+        .groups         = "drop"
+      ) %>%
+      pivot_wider(
+        id_cols = Grade,
+        names_from = Disability,
+        values_from = c(Total_N, Total_Passed, Pass_Rate, Mean_Theta, SD_Theta)
+      ) %>%
+      mutate(
+        Impact_Ratio   = round(Pass_Rate_Yes / Pass_Rate_No, 4),
+        Adverse_Impact = ifelse(Impact_Ratio < 0.80, "YES (Adverse Impact)", "NO (Passes 4/5ths)"),
+        Pooled_SD      = sqrt(((Total_N_No - 1)*SD_Theta_No^2 + (Total_N_Yes - 1)*SD_Theta_Yes^2) / (Total_N_No + Total_N_Yes - 2)),
+        Cohens_d_Theta = round((Mean_Theta_Yes - Mean_Theta_No) / Pooled_SD, 4)
+      )
+
+    # ==============================================================================
+    # 3. DETAILED PERCENTILE BREAKDOWN (1 TO 99) WITH CUMULATIVE AI RATIOS
+    # ==============================================================================
+    total_counts_per_grade <- df_disab_prep %>%
+      group_by(Grade) %>%
+      summarise(
+        Grand_Total_No  = sum(Disability == "No"),
+        Grand_Total_Yes = sum(Disability == "Yes"),
+        .groups          = "drop"
+      )
+
+    pct_counts_disab <- df_disab_prep %>%
+      group_by(Grade, Percentile) %>%
+      summarise(
+        Count_No        = sum(Disability == "No"),
+        Count_Yes       = sum(Disability == "Yes"),
+        Mean_Theta_No   = mean(NRTtheta[Disability == "No"], na.rm = TRUE),
+        Mean_Theta_Yes  = mean(NRTtheta[Disability == "Yes"], na.rm = TRUE),
+        SD_Theta_No     = sd(NRTtheta[Disability == "No"], na.rm = TRUE),
+        SD_Theta_Yes    = sd(NRTtheta[Disability == "Yes"], na.rm = TRUE),
+        .groups         = "drop"
+      )
+
+    percentile_disab_summary <- pct_counts_disab %>%
+      left_join(total_counts_per_grade, by = "Grade") %>%
+      arrange(Grade, desc(Percentile)) %>% # Sort descending for reverse cumulative sum
+      group_by(Grade) %>%
+      mutate(
+        # Cumulative candidates reaching/exceeding percentile P
+        Cum_Passed_No   = cumsum(Count_No),
+        Cum_Passed_Yes  = cumsum(Count_Yes),
+        
+        # Cumulative Selection Rates
+        Cum_Rate_No     = Cum_Passed_No / Grand_Total_No,
+        Cum_Rate_Yes    = Cum_Passed_Yes / Grand_Total_Yes,
+        
+        # Adverse Impact Ratio (Yes / No)
+        Adverse_Impact_Ratio = round(Cum_Rate_Yes / ifelse(Cum_Rate_No == 0, NA, Cum_Rate_No), 4),
+        Status_4_5ths        = ifelse(Adverse_Impact_Ratio < 0.80, "ADVERSE IMPACT (< 0.80)", "PASS (>= 0.80)"),
+        
+        # Effect Size (Cohen's d) for theta at each percentile
+        Pooled_SD_Pct        = sqrt((replace_na(SD_Theta_No, 0)^2 + replace_na(SD_Theta_Yes, 0)^2) / 2),
+        Effect_Size_d        = ifelse(Pooled_SD_Pct > 0, round((Mean_Theta_Yes - Mean_Theta_No) / Pooled_SD_Pct, 4), 0)
+      ) %>%
+      arrange(Grade, Percentile) %>% # Return to standard 1..99 order
+      select(
+        Grade, Percentile, Count_No, Count_Yes, 
+        Cum_Passed_No, Cum_Passed_Yes, 
+        Cum_Rate_No, Cum_Rate_Yes, 
+        Adverse_Impact_Ratio, Status_4_5ths, 
+        Mean_Theta_No, Mean_Theta_Yes, Effect_Size_d
+      )
+
+    # ==============================================================================
+    # 4. EXPORT TO MULTI-TAB EXCEL WORKBOOK (SEPARATE SHEET PER GRADE)
+    # ==============================================================================
+    wb <- createWorkbook()
+
+    # Add Summary Tab
+    addWorksheet(wb, "Disability AI Summary")
+    writeData(wb, "Disability AI Summary", summary_ai_disab)
+
+    # Create a separate sheet for each grade
+    grade_sheet_mapping <- list(
+      "Administrative Officer"   = "Admin Officer",
+      "Executive Officer"        = "Exec Officer",
+      "Higher Executive Officer" = "Higher Exec Officer",
+      "Senior Executive Officer" = "Senior Exec Officer",
+      "Grade 7"                  = "Grade 7",
+      "Grade 6"                  = "Grade 6"
+    )
+
+    for (full_grade in target_grades) {
+      sheet_name <- grade_sheet_mapping[[full_grade]]
+      addWorksheet(wb, sheet_name)
+      
+      # Filter data for this grade only
+      grade_data <- percentile_disab_summary %>% 
+        filter(Grade == full_grade) %>%
+        select(-Grade)
+      
+      writeData(wb, sheet_name, grade_data)
+    }
+
+    # Save workbook
+    saveWorkbook(wb, "CSNT_Disability_Adverse_Impact2025_by_Grade.xlsx", overwrite = TRUE)
+    cat("\nWorkbook saved successfully with separate sheets for each grade: CSNT_Disability_Adverse_Impact2025_by_Grade.xlsx\n")
+
+    # ==============================================================================
+    # 5. DISPLAY PREVIEW TABLES IN QUARTO REPORT
+    # ==============================================================================
+    cat("### Disability Adverse Impact Summary (Cutoff >= 29th Percentile)\n")
+    kable(
+      summary_ai_disab %>% select(Grade, Total_N_No, Total_N_Yes, Pass_Rate_No, Pass_Rate_Yes, Impact_Ratio, Adverse_Impact, Cohens_d_Theta),
+      caption = "Overall Disability AI Summary (Yes vs No)"
+    )
+    ```
+
+    ### C. Applicant Type
+
+    First step get the counts of groups.
+
+    ```{r}
+    # Safe count inspection
+    app_type_counts <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+      # Ensure column is converted from list/factor to standard character
+      mutate(application_type_str = as.character(application_form_applicant_type)) %>%
+      filter(!is.na(application_type_str) & application_type_str != "NULL") %>%
+      group_by(application_type_str) %>%
+      summarise(Frequency = n(), .groups = "drop") %>%
+      mutate(Percentage = round(Frequency / sum(Frequency) * 100, 2)) %>%
+      arrange(desc(Frequency))
+
+    kable(app_type_counts, caption = "Frequency Counts for application_form_applicant_type")
+    ```
+
+    OGD and Internal are included in the analysis but not NDPB. NDPB is not included in the grouping of internal and external applicant type analysis as they are not direct internal applicants
+
+    7.C. APPLICANT TYPE
+
+```{r}
+# 1. VERIFY DATA & SAFE COLUMN EXTRACTION
+# ===========================================================================
+
+if (!exists("CSNT_Complete_Item_Diversity_ScoredClean_2025")) {
+  stop("CSNT_Complete_Item_Diversity_ScoredClean_2025 is not present in the workspace.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+# Detect column names safely
+col_grade <- intersect(c("job_grade_clean", "job_grade.x", "job_grade", "Job_Grade", "Grade"), colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025))[1]
+col_app_type <- intersect(c("application_form_applicant_type", "applicant_type", "Applicant_Type"), colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025))[1]
+
+if (is.na(col_app_type)) {
+  stop("Could not find applicant type column in CSNT_Complete_Item_Diversity_ScoredClean_2025!")
+}
+
+# Safely extract and classify into 'External' vs 'Internal / OGD'
+df_app_prep <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+  filter(.data[[col_grade]] %in% target_grades) %>%
+  mutate(app_type_clean = as.character(.data[[col_app_type]])) %>%
+  filter(!is.na(app_type_clean) & app_type_clean != "NULL") %>%
+  mutate(
+    App_Group = case_when(
+      grepl("^External", app_type_clean, ignore.case = TRUE) ~ "External",
+      grepl("^(Internal|OGD)", app_type_clean, ignore.case = TRUE) ~ "Internal / OGD",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(App_Group)) %>%
+  filter(!is.na(NRTPercentileScore), !is.na(NRTtheta)) %>%
+  mutate(
+    Grade      = factor(.data[[col_grade]], levels = target_grades),
+    App_Group  = factor(App_Group, levels = c("Internal / OGD", "External")), # Benchmark: Internal/OGD
+    Percentile = round(NRTPercentileScore) # Integer percentiles 1..99
+  )
+
+
+# 2. PERCENTILE BREAKDOWN (1 TO 99) WITH CUMULATIVE AI RATIOS
+# ==============================================================================
+total_counts_app <- df_app_prep %>%
+  group_by(Grade) %>%
+  summarise(
+    Grand_Total_Internal = sum(App_Group == "Internal / OGD"),
+    Grand_Total_External = sum(App_Group == "External"),
+    .groups              = "drop"
+  )
+
+pct_counts_app <- df_app_prep %>%
+  group_by(Grade, Percentile) %>%
+  summarise(
+    Count_Internal       = sum(App_Group == "Internal / OGD"),
+    Count_External       = sum(App_Group == "External"),
+    Mean_Theta_Internal  = mean(NRTtheta[App_Group == "Internal / OGD"], na.rm = TRUE),
+    Mean_Theta_External  = mean(NRTtheta[App_Group == "External"], na.rm = TRUE),
+    SD_Theta_Internal    = sd(NRTtheta[App_Group == "Internal / OGD"], na.rm = TRUE),
+    SD_Theta_External    = sd(NRTtheta[App_Group == "External"], na.rm = TRUE),
+    .groups              = "drop"
+  )
+
+percentile_app_summary <- pct_counts_app %>%
+  left_join(total_counts_app, by = "Grade") %>%
+  arrange(Grade, desc(Percentile)) %>% # Sort descending for reverse cumulative sums
+  group_by(Grade) %>%
+  mutate(
+    # Cumulative candidates reaching/exceeding percentile P
+    Cum_Passed_Internal = cumsum(Count_Internal),
+    Cum_Passed_External = cumsum(Count_External),
+    
+    # Cumulative Selection Rates
+    Cum_Rate_Internal   = Cum_Passed_Internal / Grand_Total_Internal,
+    Cum_Rate_External   = Cum_Passed_External / Grand_Total_External,
+    
+    # Adverse Impact Ratio (External / Internal)
+    Adverse_Impact_Ratio = round(Cum_Rate_External / ifelse(Cum_Rate_Internal == 0, NA, Cum_Rate_Internal), 4),
+    Status_4_5ths        = ifelse(Adverse_Impact_Ratio < 0.80, "ADVERSE IMPACT (< 0.80)", "PASS (>= 0.80)"),
+    
+    # Effect Size (Cohen's d) for theta at each percentile
+    Pooled_SD_Pct        = sqrt((replace_na(SD_Theta_Internal, 0)^2 + replace_na(SD_Theta_External, 0)^2) / 2),
+    Effect_Size_d        = ifelse(Pooled_SD_Pct > 0, round((Mean_Theta_External - Mean_Theta_Internal) / Pooled_SD_Pct, 4), 0)
+  ) %>%
+  arrange(Grade, Percentile) %>% # Return to standard 1..99 order
+  select(
+    Grade, Percentile, Count_Internal, Count_External, 
+    Cum_Passed_Internal, Cum_Passed_External, 
+    Cum_Rate_Internal, Cum_Rate_External, 
+    Adverse_Impact_Ratio, Status_4_5ths, 
+    Mean_Theta_Internal, Mean_Theta_External, Effect_Size_d
+  )
+
+
+# 3. EXPORT TO MULTI-TAB EXCEL WORKBOOK (SEPARATE SHEET PER GRADE)
+# ===========================================================================
+
+wb <- createWorkbook()
+
+# Create a separate sheet for each grade
+grade_sheet_mapping <- list(
+  "Administrative Officer"   = "Admin Officer",
+  "Executive Officer"        = "Exec Officer",
+  "Higher Executive Officer" = "Higher Exec Officer",
+  "Senior Executive Officer" = "Senior Exec Officer",
+  "Grade 7"                  = "Grade 7",
+  "Grade 6"                  = "Grade 6"
+)
+
+for (full_grade in target_grades) {
+  sheet_name <- grade_sheet_mapping[[full_grade]]
+  addWorksheet(wb, sheet_name)
+  
+  grade_data <- percentile_app_summary %>% 
+    filter(Grade == full_grade) %>%
+    ungroup() %>%
+    select(-Grade)
+  
+  writeData(wb, sheet_name, grade_data)
+}
+
+# Save workbook
+saveWorkbook(wb, "CSNT_Applicant_Type_Adverse_Impact2025_by_Grade.xlsx", overwrite = TRUE)
+cat("\nWorkbook saved successfully: CSNT_Applicant_Type_Adverse_Impact2025_by_Grade.xlsx\n")
+
+
+# 4. DISPLAY PREVIEW TABLE IN QUARTO REPORT
+# ===========================================================================
+cat("### Percentile Breakdown Preview (Administrative Officer: Percentiles 1–15)\n")
+kable(
+  head(percentile_app_summary %>% filter(Grade == "Administrative Officer"), 15),
+  caption = "Percentile Breakdown (1–99) Preview for Administrative Officer"
+)
+```
+
+### D. Ethnicity
+
+1.  First get the frequencies of all the diversity groups. group them into White, which is Majority and Other, which is all the other ethnic groups.
+
+```{r}
+# 1. VERIFY DATA & SAFELY PREPARE ETHNICITY GROUPS
+# ================================================================
+if (!exists("CSNT_Complete_Item_Diversity_ScoredClean_2025")) {
+  stop("CSNT_Complete_Item_Diversity_ScoredClean_2025 is not present in the workspace.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+# Target minority ethnicities
+minority_ethnicities <- c(
+  "Asian / Asian British",
+  "Black / African / Caribbean / Black British",
+  "Mixed / multiple ethnic groups",
+  "Other ethnic group"
+)
+
+# Safely identify column names
+col_grade <- intersect(c("job_grade_clean", "job_grade.x", "job_grade", "Job_Grade", "Grade"), colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025))[1]
+col_eth   <- intersect(c("select_your_ethnic_group", "select_your ethnicity", "ethnicity", "Ethnicity", "select_your_ethnicity"), colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025))[1]
+
+if (is.na(col_eth)) {
+  stop("Could not find ethnicity column in CSNT_Complete_Item_Diversity_ScoredClean_2025!")
+}
+
+# Recode ethnicity into 'White' vs 'Other' (Excludes NAs and 'Prefer not to disclose')
+df_eth_prep <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+  filter(.data[[col_grade]] %in% target_grades) %>%
+  mutate(eth_raw = trimws(as.character(.data[[col_eth]]))) %>%
+  # Filter out missing, NULL, and explicit opt-out responses
+  filter(!is.na(eth_raw) & eth_raw != "NULL" & eth_raw != "" & eth_raw != "Prefer not to disclose") %>%
+  mutate(
+    Ethnicity_Group = case_when(
+      eth_raw == "White" ~ "White",
+      eth_raw %in% minority_ethnicities ~ "Other",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(Ethnicity_Group)) %>%
+  filter(!is.na(NRTPercentileScore), !is.na(NRTtheta)) %>%
+  mutate(
+    Grade           = factor(.data[[col_grade]], levels = target_grades),
+    Ethnicity_Group = factor(Ethnicity_Group, levels = c("White", "Other")), # White as Benchmark
+    Percentile      = round(NRTPercentileScore) # Integer percentiles 1..99
+  )
+
+
+# 2. FULL PERCENTILE BREAKDOWN (1 TO 99) FOR EACH GRADE
+# ================================================================
+total_counts_eth <- df_eth_prep %>%
+  group_by(Grade) %>%
+  summarise(
+    Grand_Total_White = sum(Ethnicity_Group == "White"),
+    Grand_Total_Other = sum(Ethnicity_Group == "Other"),
+    .groups           = "drop"
+  )
+
+# Ensure grid covers all percentiles (1 to 99) for every grade
+complete_grid <- expand.grid(
+  Grade = factor(target_grades, levels = target_grades),
+  Percentile = 1:99
+)
+
+pct_counts_eth <- df_eth_prep %>%
+  group_by(Grade, Percentile) %>%
+  summarise(
+    Count_White      = sum(Ethnicity_Group == "White"),
+    Count_Other      = sum(Ethnicity_Group == "Other"),
+    Mean_Theta_White = mean(NRTtheta[Ethnicity_Group == "White"], na.rm = TRUE),
+    Mean_Theta_Other = mean(NRTtheta[Ethnicity_Group == "Other"], na.rm = TRUE),
+    SD_Theta_White   = sd(NRTtheta[Ethnicity_Group == "White"], na.rm = TRUE),
+    SD_Theta_Other   = sd(NRTtheta[Ethnicity_Group == "Other"], na.rm = TRUE),
+    .groups          = "drop"
+  )
+
+percentile_eth_summary <- complete_grid %>%
+  left_join(pct_counts_eth, by = c("Grade", "Percentile")) %>%
+  mutate(
+    Count_White = replace_na(Count_White, 0),
+    Count_Other = replace_na(Count_Other, 0)
+  ) %>%
+  left_join(total_counts_eth, by = "Grade") %>%
+  arrange(Grade, desc(Percentile)) %>% # Reverse sort to accumulate candidates from top (99) to bottom (1)
+  group_by(Grade) %>%
+  mutate(
+    # Cumulative candidates reaching or exceeding Percentile P
+    Cum_Passed_White = cumsum(Count_White),
+    Cum_Passed_Other = cumsum(Count_Other),
+    
+    # Cumulative Selection Rates
+    Cum_Rate_White   = Cum_Passed_White / Grand_Total_White,
+    Cum_Rate_Other   = Cum_Passed_Other / Grand_Total_Other,
+    
+    # Adverse Impact Ratio (Other / White)
+    Adverse_Impact_Ratio = round(Cum_Rate_Other / ifelse(Cum_Rate_White == 0, NA, Cum_Rate_White), 4),
+    Status_4_5ths        = case_when(
+      is.na(Adverse_Impact_Ratio) ~ "NO DATA",
+      Adverse_Impact_Ratio < 0.80 ~ "ADVERSE IMPACT (< 0.80)",
+      TRUE ~ "PASS (>= 0.80)"
+    ),
+    
+    # Effect Size (Cohen's d) for theta at each percentile
+    Pooled_SD_Pct        = sqrt((replace_na(SD_Theta_White, 0)^2 + replace_na(SD_Theta_Other, 0)^2) / 2),
+    Effect_Size_d        = ifelse(Pooled_SD_Pct > 0, round((Mean_Theta_Other - Mean_Theta_White) / Pooled_SD_Pct, 4), 0)
+  ) %>%
+  arrange(Grade, Percentile) %>% # Sort back to standard 1..99 order
+  select(
+    Grade, Percentile, Count_White, Count_Other, 
+    Cum_Passed_White, Cum_Passed_Other, 
+    Cum_Rate_White, Cum_Rate_Other, 
+    Adverse_Impact_Ratio, Status_4_5ths, 
+    Mean_Theta_White, Mean_Theta_Other, Effect_Size_d
+  )
+
+# 3. EXPORT TO MULTI-TAB EXCEL WORKBOOK (SEPARATE SHEET PER GRADE)
+# ===========================================================================
+wb <- createWorkbook()
+
+# Sheet mapping for clean tab names
+grade_sheet_mapping <- list(
+  "Administrative Officer"   = "Admin Officer",
+  "Executive Officer"        = "Exec Officer",
+  "Higher Executive Officer" = "Higher Exec Officer",
+  "Senior Executive Officer" = "Senior Exec Officer",
+  "Grade 7"                  = "Grade 7",
+  "Grade 6"                  = "Grade 6"
+)
+
+# Export each grade's full 1-99 percentile matrix into a separate Excel tab
+for (full_grade in target_grades) {
+  sheet_name <- grade_sheet_mapping[[full_grade]]
+  addWorksheet(wb, sheet_name)
+  
+  grade_data <- percentile_eth_summary %>% 
+    filter(Grade == full_grade) %>%
+    ungroup() %>% 
+    select(-Grade)
+  
+  writeData(wb, sheet_name, grade_data)
+}
+
+# Save workbook
+saveWorkbook(wb, "CSNT_Ethnicity_Adverse_Impact2025_All_Percentiles.xlsx", overwrite = TRUE)
+cat("\nWorkbook saved successfully: CSNT_Ethnicity_Adverse_Impact2025_All_Percentiles.xlsx\n")
+
+
+# 4. DISPLAY PREVIEW IN QUARTO REPORT
+# ===========================================================================
+cat("### Percentile Adverse Impact Breakdown (Percentiles 1 to 99)\n")
+
+# Display first 10 rows per grade as a preview in the rendered doc
+kable(
+  percentile_eth_summary %>% group_by(Grade) %>% slice_head(n = 10),
+  caption = "Preview: First 10 Percentiles per Grade (Full 1-99 breakdown available in exported Excel file)"
+)
+```
+
+### E. Sexual Orientation
+
+'what_is_your_sexual_orientation'. Majority group is 'Heterosexual or straight' 'Other' will be combination of other groups. Inspect Frequencies first. Merge groups into one excluding 'Prefer not to disclose'
+
+Then comes AI and ES analysis for all grades
+
+```{r}
+# 1. VERIFY DATA & IDENTIFY COLUMNS
+# ===========================================================================
+
+if (!exists("CSNT_Complete_Item_Diversity_ScoredClean_2025")) {
+  stop("CSNT_Complete_Item_Diversity_ScoredClean_2025 is not present in the workspace.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+col_grade <- intersect(c("job_grade_clean", "job_grade.x", "job_grade", "Job_Grade", "Grade"), colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025))[1]
+col_so    <- intersect(c("what_is_your_sexual_orientation", "sexual_orientation", "Sexual_Orientation"), colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025))[1]
+
+if (is.na(col_so)) {
+  stop("Could not find 'what_is_your_sexual_orientation' column in CSNT_Complete_Item_Diversity_ScoredClean_2025!")
+}
+
+# 2. STRICT DATA CLEANING & EXCLUSIONS
+# ===========================================================================
+df_so_prep <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+  filter(.data[[col_grade]] %in% target_grades) %>%
+  mutate(
+    so_raw     = as.character(.data[[col_so]]),
+    NRTtheta   = as.numeric(as.character(NRTtheta)),           # Force numeric type
+    Percentile = round(as.numeric(as.character(NRTPercentileScore))) # Force numeric type
+  ) %>%
+  
+  # Exclude NAs, NULLs, blanks, and "Prefer not to disclose"
+  filter(!is.na(so_raw) & !so_raw %in% c("NULL", "", "NA")) %>%
+  filter(!grepl("prefer not to|disclose|refused", so_raw, ignore.case = TRUE)) %>%
+  filter(!is.na(Percentile), !is.na(NRTtheta)) %>%
+  
+  # Binary Grouping
+  mutate(
+    SO_Group = case_when(
+      grepl("^Heterosexual", so_raw, ignore.case = TRUE) ~ "Heterosexual or straight",
+      TRUE ~ "Other"
+    ),
+    Grade    = factor(.data[[col_grade]], levels = target_grades),
+    SO_Group = factor(SO_Group, levels = c("Heterosexual or straight", "Other"))
+  )
+
+
+# 3. OVERALL GRADE SUMMARY AT 29th PERCENTILE CUTOFF
+# ===========================================================================
+summary_ai_so <- df_so_prep %>%
+  mutate(Pass = ifelse(Percentile >= 29, 1, 0)) %>%
+  group_by(Grade, SO_Group) %>%
+  summarise(
+    Total_N         = n(),
+    Total_Passed    = sum(Pass),
+    Pass_Rate       = mean(Pass),
+    Mean_Theta      = mean(NRTtheta, na.rm = TRUE),
+    SD_Theta        = sd(NRTtheta, na.rm = TRUE),
+    .groups         = "drop"
+  ) %>%
+  pivot_wider(
+    id_cols = Grade,
+    names_from = SO_Group,
+    values_from = c(Total_N, Total_Passed, Pass_Rate, Mean_Theta, SD_Theta)
+  ) %>%
+  mutate(
+    Impact_Ratio   = round(Pass_Rate_Other / `Pass_Rate_Heterosexual or straight`, 4),
+    Adverse_Impact = ifelse(Impact_Ratio < 0.80, "YES (Adverse Impact)", "NO (Passes 4/5ths)"),
+    
+    # Safe Pooled SD & Cohen's d (Prevents / 0)
+    Pooled_SD      = sqrt(((`Total_N_Heterosexual or straight` - 1) * `SD_Theta_Heterosexual or straight`^2 + (Total_N_Other - 1) * SD_Theta_Other^2) / (`Total_N_Heterosexual or straight` + Total_N_Other - 2)),
+    Cohens_d_Theta = ifelse(Pooled_SD > 0, round((Mean_Theta_Other - `Mean_Theta_Heterosexual or straight`) / Pooled_SD, 4), 0)
+  )
+
+ 
+# 4. PERCENTILE BREAKDOWN (1 TO 99) WITH SAFE EFFECT SIZE DIVISION
+# =========================================================================== 
+total_counts_so <- df_so_prep %>%
+  group_by(Grade) %>%
+  summarise(
+    Grand_Total_Hetero = sum(SO_Group == "Heterosexual or straight"),
+    Grand_Total_Other  = sum(SO_Group == "Other"),
+    .groups            = "drop"
+  )
+
+pct_counts_so <- df_so_prep %>%
+  group_by(Grade, Percentile) %>%
+  summarise(
+    Count_Hetero       = sum(SO_Group == "Heterosexual or straight"),
+    Count_Other        = sum(SO_Group == "Other"),
+    Mean_Theta_Hetero  = round(mean(NRTtheta[SO_Group == "Heterosexual or straight"], na.rm = TRUE), 4),
+    Mean_Theta_Other   = round(mean(NRTtheta[SO_Group == "Other"], na.rm = TRUE), 4),
+    SD_Theta_Hetero    = replace_na(sd(NRTtheta[SO_Group == "Heterosexual or straight"], na.rm = TRUE), 0),
+    SD_Theta_Other     = replace_na(sd(NRTtheta[SO_Group == "Other"], na.rm = TRUE), 0),
+    .groups            = "drop"
+  )
+
+percentile_so_summary <- pct_counts_so %>%
+  left_join(total_counts_so, by = "Grade") %>%
+  arrange(Grade, desc(Percentile)) %>% # Sort descending for reverse cumulative sums
+  group_by(Grade) %>%
+  mutate(
+    Cum_Passed_Hetero = cumsum(Count_Hetero),
+    Cum_Passed_Other  = cumsum(Count_Other),
+    
+    Cum_Rate_Hetero   = Cum_Passed_Hetero / Grand_Total_Hetero,
+    Cum_Rate_Other    = Cum_Passed_Other / Grand_Total_Other,
+    
+    Adverse_Impact_Ratio = round(Cum_Rate_Other / ifelse(Cum_Rate_Hetero == 0, 1, Cum_Rate_Hetero), 4),
+    Status_4_5ths        = ifelse(Adverse_Impact_Ratio < 0.80, "ADVERSE IMPACT (< 0.80)", "PASS (>= 0.80)"),
+    
+    # Standardized Pooled SD
+    Pooled_SD_Pct        = sqrt((SD_Theta_Hetero^2 + SD_Theta_Other^2) / 2),
+    
+    # Division-by-Zero Guard for Effect Size
+    Effect_Size_d        = ifelse(Pooled_SD_Pct > 0, round((Mean_Theta_Other - Mean_Theta_Hetero) / Pooled_SD_Pct, 4), 0)
+  ) %>%
+  arrange(Grade, Percentile) %>%
+  select(
+    Grade, Percentile, Count_Hetero, Count_Other, 
+    Cum_Passed_Hetero, Cum_Passed_Other, 
+    Cum_Rate_Hetero, Cum_Rate_Other, 
+    Adverse_Impact_Ratio, Status_4_5ths, 
+    Mean_Theta_Hetero, Mean_Theta_Other, Effect_Size_d
+  )
+ 
+# 5. EXPORT TO MULTI-TAB EXCEL WORKBOOK
+# =========================================================================== 
+wb <- createWorkbook()
+
+# Sheet 1: Summary
+addWorksheet(wb, "Sexual Orientation AI Summary")
+writeData(wb, "Sexual Orientation AI Summary", summary_ai_so)
+
+# Sheets 2-7: Grade-Specific Breakdown
+grade_sheet_mapping <- list(
+  "Administrative Officer"   = "Admin Officer",
+  "Executive Officer"        = "Exec Officer",
+  "Higher Executive Officer" = "Higher Exec Officer",
+  "Senior Executive Officer" = "Senior Exec Officer",
+  "Grade 7"                  = "Grade 7",
+  "Grade 6"                  = "Grade 6"
+)
+
+for (full_grade in target_grades) {
+  sheet_name <- grade_sheet_mapping[[full_grade]]
+  addWorksheet(wb, sheet_name)
+  
+  grade_data <- percentile_so_summary %>% 
+    filter(Grade == full_grade) %>%
+    ungroup() %>%
+    select(-Grade)
+  
+  writeData(wb, sheet_name, grade_data)
+}
+
+saveWorkbook(wb, "CSNT_Sexual_Orientation_Adverse_Impact2025_by_Grade.xlsx", overwrite = TRUE)
+cat("\nWorkbook saved cleanly: CSNT_Sexual_Orientation_Adverse_Impact2025_by_Grade.xlsx\n")
+```
+
+### F. Age
+
+1.  Identify age groups
+
+```{r}
+# Safe frequency inspection for select_your_current_age_group
+age_freqs <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+  mutate(age_raw = as.character(.data[["select_your_current_age_group"]])) %>%
+  filter(!is.na(age_raw) & !age_raw %in% c("NULL", "", "NA")) %>%
+  mutate(
+    Age_Group = case_when(
+      grepl("^(40|45|50|55|60|65|70|75|80|40-44|45-49|50-54|55-59|60-64|65\\+)", age_raw, ignore.case = TRUE) ~ "40 and Higher",
+      grepl("^(16|20|25|30|35|16-24|25-29|30-34|35-39|Under 40)", age_raw, ignore.case = TRUE) ~ "Under 40",
+      TRUE ~ "Under 40" # Default allocation for remaining lower age bands
+    )
+  ) %>%
+  group_by(age_raw, Age_Group) %>%
+  summarise(Frequency = n(), .groups = "drop") %>%
+  mutate(Percentage = round(Frequency / sum(Frequency) * 100, 2)) %>%
+  arrange(Age_Group, desc(Frequency))
+
+kable(age_freqs, caption = "Frequency Counts and Mapping for 'select_your_current_age_group'")
+```
+
+2.  get the adverse impact ratios
+
+    ```{r}
+    # 1. VERIFY DATA & IDENTIFY COLUMNS
+    # =======================================================================
+    if (!exists("CSNT_Complete_Item_Diversity_ScoredClean_2025")) {
+      stop("CSNT_Complete_Item_Diversity_ScoredClean_2025 is not present in the workspace.")
+    }
+
+    target_grades <- c(
+      "Administrative Officer",
+      "Executive Officer",
+      "Higher Executive Officer",
+      "Senior Executive Officer",
+      "Grade 7",
+      "Grade 6"
+    )
+
+    col_grade <- intersect(c("job_grade_clean", "job_grade.x", "job_grade", "Job_Grade", "Grade"), colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025))[1]
+    col_age   <- intersect(c("select_your_current_age_group", "age_group", "Age_Group", "age"), colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025))[1]
+
+    if (is.na(col_age)) {
+      stop("Could not find 'select_your_current_age_group' column in CSNT_Complete_Item_Diversity_ScoredClean_2025!")
+    }
+     
+    # 2. APPLY EXCLUSIONS & CATEGORIZE AGE GROUPS
+    # ======================================================================= 
+    df_age_prep <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+      filter(.data[[col_grade]] %in% target_grades) %>%
+      mutate(
+        age_raw    = as.character(.data[[col_age]]),
+        NRTtheta   = as.numeric(as.character(NRTtheta)),
+        Percentile = round(as.numeric(as.character(NRTPercentileScore)))
+      ) %>%
+      
+      # Exclude NAs, NULLs, and empty strings
+      filter(!is.na(age_raw) & !age_raw %in% c("NULL", "", "NA")) %>%
+      filter(!grepl("prefer not to|disclose|refused", age_raw, ignore.case = TRUE)) %>%
+      filter(!is.na(Percentile), !is.na(NRTtheta)) %>%
+      
+      # Grouping Logic: '40 and Higher' vs 'Under 40'
+      mutate(
+        Age_Group = case_when(
+          grepl("^(40|45|50|55|60|65|70|75|80|40-44|45-49|50-54|55-59|60-64|65\\+)", age_raw, ignore.case = TRUE) ~ "40 and Higher",
+          TRUE ~ "Under 40"
+        ),
+        Grade     = factor(.data[[col_grade]], levels = target_grades),
+        Age_Group = factor(Age_Group, levels = c("Under 40", "40 and Higher")) # Under 40 as Benchmark
+      )
+     
+    # 3. OVERALL GRADE SUMMARY AT DEFAULT 29th PERCENTILE CUTOFF
+    # =======================================================================
+    summary_ai_age <- df_age_prep %>%
+      mutate(Pass = ifelse(Percentile >= 29, 1, 0)) %>%
+      group_by(Grade, Age_Group) %>%
+      summarise(
+        Total_N         = n(),
+        Total_Passed    = sum(Pass),
+        Pass_Rate       = mean(Pass),
+        Mean_Theta      = mean(NRTtheta, na.rm = TRUE),
+        SD_Theta        = sd(NRTtheta, na.rm = TRUE),
+        .groups         = "drop"
+      ) %>%
+      pivot_wider(
+        id_cols = Grade,
+        names_from = Age_Group,
+        values_from = c(Total_N, Total_Passed, Pass_Rate, Mean_Theta, SD_Theta)
+      ) %>%
+      mutate(
+        # Adverse Impact Ratio: (40 and Higher) / (Under 40)
+        Impact_Ratio   = round(`Pass_Rate_40 and Higher` / `Pass_Rate_Under 40`, 4),
+        Adverse_Impact = ifelse(Impact_Ratio < 0.80, "YES (Adverse Impact)", "NO (Passes 4/5ths)"),
+        
+        # Cohen's d Effect Size for Theta
+        Pooled_SD      = sqrt(((`Total_N_Under 40` - 1) * `SD_Theta_Under 40`^2 + (`Total_N_40 and Higher` - 1) * `SD_Theta_40 and Higher`^2) / (`Total_N_Under 40` + `Total_N_40 and Higher` - 2)),
+        Cohens_d_Theta = ifelse(Pooled_SD > 0, round((`Mean_Theta_40 and Higher` - `Mean_Theta_Under 40`) / Pooled_SD, 4), 0)
+      )
+     
+    # 4. PERCENTILE BREAKDOWN (1 TO 99) WITH CUMULATIVE AI RATIOS & EFFECT SIZES
+    # =======================================================================
+    total_counts_age <- df_age_prep %>%
+      group_by(Grade) %>%
+      summarise(
+        Grand_Total_Under40 = sum(Age_Group == "Under 40"),
+        Grand_Total_40Plus  = sum(Age_Group == "40 and Higher"),
+        .groups             = "drop"
+      )
+
+    pct_counts_age <- df_age_prep %>%
+      group_by(Grade, Percentile) %>%
+      summarise(
+        Count_Under40       = sum(Age_Group == "Under 40"),
+        Count_40Plus        = sum(Age_Group == "40 and Higher"),
+        Mean_Theta_Under40  = round(mean(NRTtheta[Age_Group == "Under 40"], na.rm = TRUE), 4),
+        Mean_Theta_40Plus   = round(mean(NRTtheta[Age_Group == "40 and Higher"], na.rm = TRUE), 4),
+        SD_Theta_Under40    = replace_na(sd(NRTtheta[Age_Group == "Under 40"], na.rm = TRUE), 0),
+        SD_Theta_40Plus     = replace_na(sd(NRTtheta[Age_Group == "40 and Higher"], na.rm = TRUE), 0),
+        .groups             = "drop"
+      )
+
+    percentile_age_summary <- pct_counts_age %>%
+      left_join(total_counts_age, by = "Grade") %>%
+      arrange(Grade, desc(Percentile)) %>% # Sort descending for reverse cumulative sums
+      group_by(Grade) %>%
+      mutate(
+        Cum_Passed_Under40 = cumsum(Count_Under40),
+        Cum_Passed_40Plus  = cumsum(Count_40Plus),
+        
+        Cum_Rate_Under40   = Cum_Passed_Under40 / Grand_Total_Under40,
+        Cum_Rate_40Plus    = Cum_Passed_40Plus / Grand_Total_40Plus,
+        
+        Adverse_Impact_Ratio = round(Cum_Rate_40Plus / ifelse(Cum_Rate_Under40 == 0, 1, Cum_Rate_Under40), 4),
+        Status_4_5ths        = ifelse(Adverse_Impact_Ratio < 0.80, "ADVERSE IMPACT (< 0.80)", "PASS (>= 0.80)"),
+        
+        # Standardized Pooled SD & Cohen's d Effect Size
+        Pooled_SD_Pct        = sqrt((SD_Theta_Under40^2 + SD_Theta_40Plus^2) / 2),
+        Effect_Size_d        = ifelse(Pooled_SD_Pct > 0, round((Mean_Theta_40Plus - Mean_Theta_Under40) / Pooled_SD_Pct, 4), 0)
+      ) %>%
+      arrange(Grade, Percentile) %>% # Return to standard 1..99 order
+      select(
+        Grade, Percentile, Count_Under40, Count_40Plus, 
+        Cum_Passed_Under40, Cum_Passed_40Plus, 
+        Cum_Rate_Under40, Cum_Rate_40Plus, 
+        Adverse_Impact_Ratio, Status_4_5ths, 
+        Mean_Theta_Under40, Mean_Theta_40Plus, Effect_Size_d
+      )
+
+    # 5. EXPORT TO MULTI-TAB EXCEL WORKBOOK (SEPARATE SHEET PER GRADE)
+    # =======================================================================
+    wb <- createWorkbook()
+
+    # Sheet 1: Summary
+    addWorksheet(wb, "Age Group AI Summary")
+    writeData(wb, "Age Group AI Summary", summary_ai_age)
+
+    # Sheets 2-7: Grade-Specific Breakdown
+    grade_sheet_mapping <- list(
+      "Administrative Officer"   = "Admin Officer",
+      "Executive Officer"        = "Exec Officer",
+      "Higher Executive Officer" = "Higher Exec Officer",
+      "Senior Executive Officer" = "Senior Exec Officer",
+      "Grade 7"                  = "Grade 7",
+      "Grade 6"                  = "Grade 6"
+    )
+
+    for (full_grade in target_grades) {
+      sheet_name <- grade_sheet_mapping[[full_grade]]
+      addWorksheet(wb, sheet_name)
+      
+      grade_data <- percentile_age_summary %>% 
+        filter(Grade == full_grade) %>%
+        ungroup() %>% # Prevents 'Adding missing grouping variables' messages
+        select(-Grade)
+      
+      writeData(wb, sheet_name, grade_data)
+    }
+
+    saveWorkbook(wb, "CSNT_Age_Group_Adverse_Impact2025_by_Grade.xlsx", overwrite = TRUE)
+    cat("\nWorkbook successfully saved: CSNT_Age_Group_Adverse_Impact2025_by_Grade.xlsx\n")
+     
+    # 6. DISPLAY OVERVIEW TABLE IN REPORT
+    # =======================================================================
+    cat("\n### Overall Age Group Adverse Impact Summary (Cutoff >= 29th Percentile)\n")
+    kable(
+      summary_ai_age,
+      caption = "Adverse Impact & Effect Size Summary: 40 and Higher vs. Under 40"
+    )
+    ```
+
+    ### G.Religion
+
+    Majority Religion versus other religion-belief members
+
+    Religion. Majority (Christian) versus Minority. Get the frequencies first.
+
+    ```{r}
+    # Safe frequency inspection for what_is_your_religion_or_belief
+    religion_freqs <- CSNT_Complete_Diversity_Test_Merged %>%
+      mutate(rel_raw = as.character(.data[["what_is_your_religion_or_belief"]])) %>%
+      filter(!is.na(rel_raw) & !rel_raw %in% c("NULL", "", "NA")) %>%
+      mutate(
+        Action_Status = case_when(
+          grepl("prefer not to|disclose|refused", rel_raw, ignore.case = TRUE) ~ "EXCLUDED (Prefer Not to Disclose)",
+          grepl("^Christian", rel_raw, ignore.case = TRUE) ~ "INCLUDED (Christian)",
+          TRUE ~ "INCLUDED (Other_Religion)"
+        )
+      ) %>%
+      group_by(rel_raw, Action_Status) %>%
+      summarise(Frequency = n(), .groups = "drop") %>%
+      mutate(Percentage = round(Frequency / sum(Frequency) * 100, 2)) %>%
+      arrange(Action_Status, desc(Frequency))
+
+    kable(religion_freqs, caption = "Frequency Counts and Mapping for 'what_is_your_religion_or_belief'")
+    ```
+
+    #### Adverse Impact Ratios for Religion or Belief
+
+    ```{r}
+    # 1. VERIFY DATA & IDENTIFY COLUMNS
+    # =======================================================================
+    if (!exists("CSNT_Complete_Diversity_Test_Merged")) {
+      stop("CSNT_Complete_Diversity_Test_Merged is not present in the workspace.")
+    }
+
+    target_grades <- c(
+      "Administrative Officer",
+      "Executive Officer",
+      "Higher Executive Officer",
+      "Senior Executive Officer",
+      "Grade 7",
+      "Grade 6"
+    )
+
+    col_grade <- intersect(c("job_grade_clean", "job_grade.x", "job_grade", "Job_Grade", "Grade"), colnames(CSNT_Complete_Diversity_Test_Merged))[1]
+    col_rel   <- intersect(c("what_is_your_religion_or_belief", "religion", "Religion", "religion_belief"), colnames(CSNT_Complete_Diversity_Test_Merged))[1]
+
+    if (is.na(col_rel)) {
+      stop("Could not find 'what_is_your_religion_or_belief' column in CSNT_Complete_Diversity_Test_Merged!")
+    }
+
+
+    # 2. APPLY EXCLUSIONS & CATEGORIZE RELIGION GROUPS
+    # =======================================================================
+
+    df_rel_prep <- CSNT_Complete_Diversity_Test_Merged %>%
+      filter(.data[[col_grade]] %in% target_grades) %>%
+      mutate(
+        rel_raw    = as.character(.data[[col_rel]]),
+        NRTtheta   = as.numeric(as.character(NRTtheta)),
+        Percentile = round(as.numeric(as.character(NRTPercentileScore)))
+      ) %>%
+      
+      # Exclude NAs, NULLs, empty strings, and "Prefer not to disclose"
+      filter(!is.na(rel_raw) & !rel_raw %in% c("NULL", "", "NA")) %>%
+      filter(!grepl("prefer not to|disclose|refused", rel_raw, ignore.case = TRUE)) %>%
+      filter(!is.na(Percentile), !is.na(NRTtheta)) %>%
+      
+      # Grouping Logic: 'Christian' vs 'Other_Religion'
+      mutate(
+        Religion_Group = case_when(
+          grepl("^Christian", rel_raw, ignore.case = TRUE) ~ "Christian",
+          TRUE ~ "Other_Religion"
+        ),
+        Grade          = factor(.data[[col_grade]], levels = target_grades),
+        Religion_Group = factor(Religion_Group, levels = c("Christian", "Other_Religion")) # Christian as Benchmark
+      )
+
+
+    # 3. OVERALL GRADE SUMMARY AT DEFAULT 29th PERCENTILE CUTOFF
+    # =======================================================================
+    summary_ai_rel <- df_rel_prep %>%
+      mutate(Pass = ifelse(Percentile >= 29, 1, 0)) %>%
+      group_by(Grade, Religion_Group) %>%
+      summarise(
+        Total_N         = n(),
+        Total_Passed    = sum(Pass),
+        Pass_Rate       = mean(Pass),
+        Mean_Theta      = mean(NRTtheta, na.rm = TRUE),
+        SD_Theta        = sd(NRTtheta, na.rm = TRUE),
+        .groups         = "drop"
+      ) %>%
+      pivot_wider(
+        id_cols = Grade,
+        names_from = Religion_Group,
+        values_from = c(Total_N, Total_Passed, Pass_Rate, Mean_Theta, SD_Theta)
+      ) %>%
+      mutate(
+        # Adverse Impact Ratio: Other_Religion / Christian
+        Impact_Ratio   = round(Pass_Rate_Other_Religion / Pass_Rate_Christian, 4),
+        Adverse_Impact = ifelse(Impact_Ratio < 0.80, "YES (Adverse Impact)", "NO (Passes 4/5ths)"),
+        
+        # Cohen's d Effect Size for Theta
+        Pooled_SD      = sqrt(((Total_N_Christian - 1) * SD_Theta_Christian^2 + (Total_N_Other_Religion - 1) * SD_Theta_Other_Religion^2) / (Total_N_Christian + Total_N_Other_Religion - 2)),
+        Cohens_d_Theta = ifelse(Pooled_SD > 0, round((Mean_Theta_Other_Religion - Mean_Theta_Christian) / Pooled_SD, 4), 0)
+      )
+
+
+    # 4. PERCENTILE BREAKDOWN (1 TO 99) WITH CUMULATIVE AI RATIOS & EFFECT SIZES
+    # =======================================================================
+    total_counts_rel <- df_rel_prep %>%
+      group_by(Grade) %>%
+      summarise(
+        Grand_Total_Christian = sum(Religion_Group == "Christian"),
+        Grand_Total_OtherRel  = sum(Religion_Group == "Other_Religion"),
+        .groups               = "drop"
+      )
+
+    pct_counts_rel <- df_rel_prep %>%
+      group_by(Grade, Percentile) %>%
+      summarise(
+        Count_Christian       = sum(Religion_Group == "Christian"),
+        Count_OtherRel        = sum(Religion_Group == "Other_Religion"),
+        Mean_Theta_Christian  = round(mean(NRTtheta[Religion_Group == "Christian"], na.rm = TRUE), 4),
+        Mean_Theta_OtherRel   = round(mean(NRTtheta[Religion_Group == "Other_Religion"], na.rm = TRUE), 4),
+        SD_Theta_Christian    = replace_na(sd(NRTtheta[Religion_Group == "Christian"], na.rm = TRUE), 0),
+        SD_Theta_OtherRel     = replace_na(sd(NRTtheta[Religion_Group == "Other_Religion"], na.rm = TRUE), 0),
+        .groups               = "drop"
+      )
+
+    percentile_rel_summary <- pct_counts_rel %>%
+      left_join(total_counts_rel, by = "Grade") %>%
+      arrange(Grade, desc(Percentile)) %>% # Sort descending for reverse cumulative sums
+      group_by(Grade) %>%
+      mutate(
+        Cum_Passed_Christian = cumsum(Count_Christian),
+        Cum_Passed_OtherRel  = cumsum(Count_OtherRel),
+        
+        Cum_Rate_Christian   = Cum_Passed_Christian / Grand_Total_Christian,
+        Cum_Rate_OtherRel    = Cum_Passed_OtherRel / Grand_Total_OtherRel,
+        
+        Adverse_Impact_Ratio = round(Cum_Rate_OtherRel / ifelse(Cum_Rate_Christian == 0, 1, Cum_Rate_Christian), 4),
+        Status_4_5ths        = ifelse(Adverse_Impact_Ratio < 0.80, "ADVERSE IMPACT (< 0.80)", "PASS (>= 0.80)"),
+        
+        # Standardized Pooled SD & Cohen's d Effect Size
+        Pooled_SD_Pct        = sqrt((SD_Theta_Christian^2 + SD_Theta_OtherRel^2) / 2),
+        Effect_Size_d        = ifelse(Pooled_SD_Pct > 0, round((Mean_Theta_OtherRel - Mean_Theta_Christian) / Pooled_SD_Pct, 4), 0)
+      ) %>%
+      arrange(Grade, Percentile) %>% # Return to standard 1..99 order
+      select(
+        Grade, Percentile, Count_Christian, Count_OtherRel, 
+        Cum_Passed_Christian, Cum_Passed_OtherRel, 
+        Cum_Rate_Christian, Cum_Rate_OtherRel, 
+        Adverse_Impact_Ratio, Status_4_5ths, 
+        Mean_Theta_Christian, Mean_Theta_OtherRel, Effect_Size_d
+      )
+
+
+    # 5. EXPORT TO MULTI-TAB EXCEL WORKBOOK (SEPARATE SHEET PER GRADE)
+    # =======================================================================
+    wb <- createWorkbook()
+
+    # Sheet 1: Summary
+    addWorksheet(wb, "Religion AI Summary")
+    writeData(wb, "Religion AI Summary", summary_ai_rel)
+
+    # Sheets 2-7: Grade-Specific Breakdown
+    grade_sheet_mapping <- list(
+      "Administrative Officer"   = "Admin Officer",
+      "Executive Officer"        = "Exec Officer",
+      "Higher Executive Officer" = "Higher Exec Officer",
+      "Senior Executive Officer" = "Senior Exec Officer",
+      "Grade 7"                  = "Grade 7",
+      "Grade 6"                  = "Grade 6"
+    )
+
+    for (full_grade in target_grades) {
+      sheet_name <- grade_sheet_mapping[[full_grade]]
+      addWorksheet(wb, sheet_name)
+      
+      grade_data <- percentile_rel_summary %>% 
+        filter(Grade == full_grade) %>%
+        ungroup() %>% # Prevents 'Adding missing grouping variables' messages
+        select(-Grade)
+      
+      writeData(wb, sheet_name, grade_data)
+    }
+
+    saveWorkbook(wb, "CSNT_Religion_Adverse_Impact_by_Grade.xlsx", overwrite = TRUE)
+    cat("\nWorkbook successfully saved: CSNT_Religion_Adverse_Impact_by_Grade.xlsx\n")
+
+
+    # 6. DISPLAY OVERVIEW TABLE IN REPORT
+    # =======================================================================
+    cat("\n### Overall Religion/Belief Adverse Impact Summary (Cutoff >= 29th Percentile)\n")
+    kable(
+      summary_ai_rel,
+      caption = "Adverse Impact & Effect Size Summary: Other_Religion vs. Christian"
+    )
+    ```
+
+PASS Rates Analysis (considering there is no AI up to 65th percentile in the new dataset)
+
+```{r}
+# 1. IDENTIFY COLUMNS SAFELY & DEFINE TARGET GRADES
+# ================================================================
+if (!exists("CSNT_Complete_Item_Diversity_ScoredClean_2025")) {
+  stop("CSNT_Complete_Item_Diversity_ScoredClean_2025 is not present in the workspace.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+# Detect column names dynamically
+col_grade <- intersect(
+  c("job_grade_clean", "job_grade.x", "job_grade", "Job_Grade", "Grade"), 
+  colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025)
+)[1]
+
+col_score <- intersect(
+  c("NRTPercentileScore", "PercentileScore", "percentile_score", "Percentile"), 
+  colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025)
+)[1]
+
+
+# 2. FILTER & COMPUTE PASS/FAIL COUNTS ACROSS CUTOFFS
+# ==============================================================================
+thresholds <- c(35, 40, 45, 50)
+
+pass_summary_multi <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+  # Filter for the 6 target grades and non-missing scores
+  filter(.data[[col_grade]] %in% target_grades) %>%
+  mutate(
+    Grade = factor(.data[[col_grade]], levels = target_grades),
+    Score = as.numeric(as.character(.data[[col_score]]))
+  ) %>%
+  filter(!is.na(Score)) %>%
+  # Calculate pass/fail status for each threshold across candidate records
+  group_by(Grade) %>%
+  summarise(
+    Total_Candidates = n(),
+    
+    # 35th Percentile
+    Passed_35 = sum(Score >= 35),
+    Failed_35 = sum(Score < 35),
+    Pass_Rate_35_Pct = round(mean(Score >= 35) * 100, 2),
+    
+    # 40th Percentile
+    Passed_40 = sum(Score >= 40),
+    Failed_40 = sum(Score < 40),
+    Pass_Rate_40_Pct = round(mean(Score >= 40) * 100, 2),
+    
+    # 45th Percentile
+    Passed_45 = sum(Score >= 45),
+    Failed_45 = sum(Score < 45),
+    Pass_Rate_45_Pct = round(mean(Score >= 45) * 100, 2),
+    
+    # 50th Percentile
+    Passed_50 = sum(Score >= 50),
+    Failed_50 = sum(Score < 50),
+    Pass_Rate_50_Pct = round(mean(Score >= 50) * 100, 2),
+    
+    .groups = "drop"
+  ) %>%
+  arrange(Grade)
+
+
+# 3. DISPLAY SUMMARY TABLES
+# ================================================================
+# Wide Overview Table
+kable(
+  pass_summary_multi,
+  caption = "Pass Counts, Fail Counts, and Pass Rates (%) by Job Grade Across Percentile Cutoffs"
+)
+```
+
+# Differential Item Functioning Analysis
+
+NOTE:
+
+-   **(`difR` IRT Models)**: Attempting to fit complex 2PL models or full interactive GLM wrappers inside `difR` caused all 319 items to show **`Non-Converged Items: 319`** due to matrix singularity and wide continuous $\theta$ bounds.
+
+-   **Current Solution (Direct Base R `glm`)**: Evaluating items directly using base R logistic regression (`glm`) controlling for `NRTtheta` resolved numerical singularity—achieving a **100% convergence rate (`Converged Items: 319`)** across all items
+
+File is written here:
+
+```{r}
+# Define output filename
+CSNT_Complete_Item_Diversity_ScoredClean_2025.xlsx <- "CSNT_Complete_Item_Diversity_ScoredClean_2025.xlsx"
+
+# Create workbook and add worksheet
+wb <- createWorkbook()
+addWorksheet(wb, "Data")
+writeData(wb, "Data", CSNT_Complete_Item_Diversity_ScoredClean_2025)
+
+# Optional: Header styling
+header_style <- createStyle(
+  fontName = "Arial", fontSize = 11, fontColour = "#FFFFFF",
+  fgFill = "#1F497D", halign = "center", textDecoration = "bold"
+)
+addStyle(wb, "Data", header_style, rows = 1, cols = 1:ncol(CSNT_Complete_Item_Diversity_ScoredClean_2025), gridExpand = TRUE)
+setColWidths(wb, "Data", cols = 1:ncol(CSNT_Complete_Item_Diversity_ScoredClean_2025), widths = "auto")
+
+# Save file in current working directory
+saveWorkbook(wb, CSNT_Complete_Item_Diversity_ScoredClean_2025.xlsx, overwrite = TRUE)
+
+cat("Successfully saved dataset to:", file.path(getwd(), CSNT_Complete_Item_Diversity_ScoredClean_2025.xlsx), "\n")
+```
+
+### A. Gender
+
+```{r}
+
+# 1. PREPARE DATASET FOR GENDER DIF ('gender' COLUMN)
+# ==============================================================================
+dat <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>% 
+  select(!c(NRTPercentileScore, `NRTz-score`)) %>% 
+  select(starts_with("NR"), NRTtheta, gender) %>% 
+  mutate(
+    Gender = case_when(
+      as.character(gender) %in% c("Man", "Male", "man", "male", "M", "m", "1") ~ 'Man', 
+      as.character(gender) %in% c("Woman", "Female", "woman", "female", "F", "f", "2") ~ 'Woman',
+      TRUE ~ 'None'
+    )
+  ) %>% 
+  filter(Gender != "None", !is.na(NRTtheta)) %>% 
+  select(-gender)
+
+# Define reference/focal groups: Focal = Woman (1), Reference = Man (0)
+dat <- dat %>% 
+  mutate(Group_Num = ifelse(Gender == "Woman", 1, 0))
+
+item_cols <- setdiff(colnames(dat), c("Gender", "Group_Num", "NRTtheta"))
+
+# Sanitize items strictly into binary 0 and 1
+dat <- dat %>%
+  mutate(across(all_of(item_cols), ~ {
+    val <- if (is.factor(.)) as.numeric(as.character(.)) else as.numeric(.)
+    ifelse(is.na(val) | val <= 0, 0, 1)
+  }))
+
+# Screen for active items with variance > 0
+item_variances <- sapply(dat[item_cols], function(x) var(x, na.rm = TRUE))
+valid_items <- names(item_variances[!is.na(item_variances) & item_variances > 0])
+
+cat("Valid active items retained for Gender DIF:", length(valid_items), "\n")
+cat("Sample size (N):", nrow(dat), "\n")
+cat("Gender breakdown:\n")
+print(table(dat$Gender))
+ 
+# 2. LOGISTIC REGRESSION DIF MATCHED DIRECTLY ON NRTtheta
+# ==============================================================================
+calc_nagelkerke <- function(model_null, model_full, n) {
+  dev_null <- deviance(model_null)
+  dev_full <- deviance(model_full)
+  r2_cs    <- 1 - exp((dev_full - dev_null) / n)
+  r2_max   <- 1 - exp(-dev_null / n)
+  return(r2_cs / r2_max)
+}
+
+n_items <- length(valid_items)
+
+dif_results <- data.frame(
+  Item = valid_items,
+  LRT_Statistic = rep(NA_real_, n_items),
+  p_value = rep(NA_real_, n_items),
+  Nagelkerke_Delta_R2 = rep(NA_real_, n_items),
+  DIF_Type = rep("None", n_items),
+  ETS_Effect_Category = rep("Negligible (A)", n_items),
+  DIF_Flagged = rep("NO", n_items),
+  Convergence = rep("Converged", n_items),
+  stringsAsFactors = FALSE
+)
+
+n_sample <- nrow(dat)
+
+# Loop directly over items (No IRT estimation required)
+for (i in seq_along(valid_items)) {
+  itm <- valid_items[i]
+  
+  df_item <- data.frame(
+    y = dat[[itm]],
+    theta = dat$NRTtheta,
+    group = dat$Group_Num
+  )
+  
+  tryCatch({
+    # Fit Logistic Models controlling for existing NRTtheta
+    m0 <- suppressWarnings(glm(y ~ theta, data = df_item, family = binomial()))
+    m1 <- suppressWarnings(glm(y ~ theta + group, data = df_item, family = binomial()))
+    m2 <- suppressWarnings(glm(y ~ theta + group + theta:group, data = df_item, family = binomial()))
+    
+    # Likelihood Ratio Test comparing Base Model (m0) vs Full Model (m2)
+    lrt_stat <- deviance(m0) - deviance(m2)
+    lrt_df   <- df.residual(m0) - df.residual(m2)
+    p_val    <- pchisq(lrt_stat, df = lrt_df, lower.tail = FALSE)
+    
+    # Nagelkerke Delta R2 Effect Size calculation
+    r2_0 <- calc_nagelkerke(m0, m0, n_sample)
+    r2_2 <- calc_nagelkerke(m0, m2, n_sample)
+    delta_r2 <- abs(r2_2 - r2_0)
+    
+    # Uniform vs Non-Uniform classification
+    lrt_unif_stat <- deviance(m0) - deviance(m1)
+    p_unif <- pchisq(lrt_unif_stat, df = 1, lower.tail = FALSE)
+    dif_type <- ifelse(p_unif < 0.05, "Uniform", "Non-Uniform")
+    
+    # Standard ETS Effect Size Categorization
+    ets_cat <- case_when(
+      delta_r2 < 0.035 ~ "Negligible (A)",
+      delta_r2 >= 0.035 & delta_r2 < 0.070 ~ "Moderate (B)",
+      delta_r2 >= 0.070 ~ "Large / Severe (C)",
+      TRUE ~ "Negligible (A)"
+    )
+    
+    flagged <- ifelse(p_val < 0.05 & delta_r2 >= 0.035, "YES", "NO")
+    
+    dif_results$LRT_Statistic[i] <- round(lrt_stat, 3)
+    dif_results$p_value[i]       <- round(p_val, 4)
+    dif_results$Nagelkerke_Delta_R2[i] <- round(delta_r2, 4)
+    dif_results$DIF_Type[i]     <- ifelse(p_val < 0.05, dif_type, "None")
+    dif_results$ETS_Effect_Category[i] <- ets_cat
+    dif_results$DIF_Flagged[i]  <- flagged
+    dif_results$Convergence[i]  <- "Converged"
+    
+  }, error = function(e) {
+    dif_results$Convergence[i] <<- "Failed"
+  })
+}
+
+flagged_logistic <- dif_results %>% filter(DIF_Flagged == "YES")
+ 
+# 3. EXPORT MULTI-TAB EXCEL WORKBOOK
+# ==============================================================================
+wb <- createWorkbook()
+
+# Sheet 1: Flagged Gender DIF Items
+addWorksheet(wb, "Flagged_Gender_DIF")
+writeData(wb, "Flagged_Gender_DIF", flagged_logistic)
+
+# Sheet 2: Complete All-Items Gender DIF Results
+addWorksheet(wb, "All_Items_Gender_DIF")
+writeData(wb, "All_Items_Gender_DIF", dif_results)
+
+# Header formatting
+header_style <- createStyle(
+  fontName = "Arial", fontSize = 11, fontColour = "#FFFFFF",
+  fgFill = "#1F497D", halign = "center", textDecoration = "bold"
+)
+
+addStyle(wb, "Flagged_Gender_DIF", header_style, rows = 1, cols = 1:ncol(flagged_logistic), gridExpand = TRUE)
+addStyle(wb, "All_Items_Gender_DIF", header_style, rows = 1, cols = 1:ncol(dif_results), gridExpand = TRUE)
+
+setColWidths(wb, "Flagged_Gender_DIF", cols = 1:ncol(flagged_logistic), widths = "auto")
+setColWidths(wb, "All_Items_Gender_DIF", cols = 1:ncol(dif_results), widths = "auto")
+
+excel_filename <- "Gender_DIF_Analysis_NRTtheta_Results.xlsx"
+saveWorkbook(wb, excel_filename, overwrite = TRUE)
+
+cat("\n--- GENDER DIF ANALYSIS COMPLETE (MATCHED ON NRTtheta) ---\n")
+cat("Total Items Evaluated:", nrow(dif_results), "\n")
+cat("Converged Items:", sum(dif_results$Convergence == "Converged"), "\n")
+cat("Items Flagged for Gender DIF (Moderate/Severe & p < 0.05):", nrow(flagged_logistic), "\n")
+cat("Excel Workbook Saved to:", excel_filename, "\n")
+```
+
+### B. Disability
+
+```{r}
+# 1. PREPARE DATASET FOR DISABILITY DIF ('disability' COLUMN)
+# ==============================================================================
+# Identify exact column name for disability
+disability_col <- grep("disabilit", colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025), ignore.case = TRUE, value = TRUE)[1]
+
+if (is.na(disability_col)) {
+  stop("Could not automatically locate 'disability' column. Please verify column name!")
+}
+
+cat("Using disability column:", disability_col, "\n")
+
+dat <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>% 
+  select(!c(NRTPercentileScore, `NRTz-score`)) %>% 
+  select(starts_with("NR"), NRTtheta, all_of(disability_col)) %>% 
+  rename(Disability_Raw = all_of(disability_col)) %>% 
+  mutate(
+    Disability = case_when(
+      as.character(Disability_Raw) %in% c("Yes", "yes", "Y", "y", "1") ~ 'Yes', 
+      as.character(Disability_Raw) %in% c("No", "no", "N", "n", "0") ~ 'No',
+      TRUE ~ 'None' # Excludes "Prefer not to say", "Prefer not to disclose", NAs, etc.
+    )
+  ) %>% 
+  filter(Disability != "None", !is.na(NRTtheta)) %>% 
+  select(-Disability_Raw)
+
+# Define reference/focal groups: Focal = Yes (1), Reference = No (0)
+dat <- dat %>% 
+  mutate(Group_Num = ifelse(Disability == "Yes", 1, 0))
+
+item_cols <- setdiff(colnames(dat), c("Disability", "Group_Num", "NRTtheta"))
+
+# Sanitize items strictly into binary 0 and 1
+dat <- dat %>%
+  mutate(across(all_of(item_cols), ~ {
+    val <- if (is.factor(.)) as.numeric(as.character(.)) else as.numeric(.)
+    ifelse(is.na(val) | val <= 0, 0, 1)
+  }))
+
+# Screen for active items with variance > 0
+item_variances <- sapply(dat[item_cols], function(x) var(x, na.rm = TRUE))
+valid_items <- names(item_variances[!is.na(item_variances) & item_variances > 0])
+
+cat("Disability breakdown in filtered dataset:\n")
+print(table(dat$Disability))
+cat("Valid active items retained for Disability DIF:", length(valid_items), "\n")
+cat("Sample size (N):", nrow(dat), "\n\n")
+
+# ==============================================================================
+# 2. LOGISTIC REGRESSION DIF MATCHED DIRECTLY ON NRTtheta
+# ==============================================================================
+calc_nagelkerke <- function(model_null, model_full, n) {
+  dev_null <- deviance(model_null)
+  dev_full <- deviance(model_full)
+  r2_cs    <- 1 - exp((dev_full - dev_null) / n)
+  r2_max   <- 1 - exp(-dev_null / n)
+  return(r2_cs / r2_max)
+}
+
+n_items <- length(valid_items)
+
+dif_results <- data.frame(
+  Item = valid_items,
+  LRT_Statistic = rep(NA_real_, n_items),
+  p_value = rep(NA_real_, n_items),
+  Nagelkerke_Delta_R2 = rep(NA_real_, n_items),
+  DIF_Type = rep("None", n_items),
+  ETS_Effect_Category = rep("Negligible (A)", n_items),
+  DIF_Flagged = rep("NO", n_items),
+  Convergence = rep("Converged", n_items),
+  stringsAsFactors = FALSE
+)
+
+n_sample <- nrow(dat)
+
+# Fast loop evaluating all active items matched on NRTtheta
+for (i in seq_along(valid_items)) {
+  itm <- valid_items[i]
+  
+  df_item <- data.frame(
+    y = dat[[itm]],
+    theta = dat$NRTtheta,
+    group = dat$Group_Num
+  )
+  
+  tryCatch({
+    # Fit models controlling for pre-computed NRTtheta
+    m0 <- suppressWarnings(glm(y ~ theta, data = df_item, family = binomial()))
+    m1 <- suppressWarnings(glm(y ~ theta + group, data = df_item, family = binomial()))
+    m2 <- suppressWarnings(glm(y ~ theta + group + theta:group, data = df_item, family = binomial()))
+    
+    # Likelihood Ratio Test comparing Base Model (m0) vs Full Model (m2)
+    lrt_stat <- deviance(m0) - deviance(m2)
+    lrt_df   <- df.residual(m0) - df.residual(m2)
+    p_val    <- pchisq(lrt_stat, df = lrt_df, lower.tail = FALSE)
+    
+    # Nagelkerke Delta R2 Effect Size calculation
+    r2_0 <- calc_nagelkerke(m0, m0, n_sample)
+    r2_2 <- calc_nagelkerke(m0, m2, n_sample)
+    delta_r2 <- abs(r2_2 - r2_0)
+    
+    # Uniform vs Non-Uniform test
+    lrt_unif_stat <- deviance(m0) - deviance(m1)
+    p_unif <- pchisq(lrt_unif_stat, df = 1, lower.tail = FALSE)
+    dif_type <- ifelse(p_unif < 0.05, "Uniform", "Non-Uniform")
+    
+    # Standard ETS Effect Size Categorization
+    ets_cat <- case_when(
+      delta_r2 < 0.035 ~ "Negligible (A)",
+      delta_r2 >= 0.035 & delta_r2 < 0.070 ~ "Moderate (B)",
+      delta_r2 >= 0.070 ~ "Large / Severe (C)",
+      TRUE ~ "Negligible (A)"
+    )
+    
+    flagged <- ifelse(p_val < 0.05 & delta_r2 >= 0.035, "YES", "NO")
+    
+    dif_results$LRT_Statistic[i] <- round(lrt_stat, 3)
+    dif_results$p_value[i]       <- round(p_val, 4)
+    dif_results$Nagelkerke_Delta_R2[i] <- round(delta_r2, 4)
+    dif_results$DIF_Type[i]     <- ifelse(p_val < 0.05, dif_type, "None")
+    dif_results$ETS_Effect_Category[i] <- ets_cat
+    dif_results$DIF_Flagged[i]  <- flagged
+    dif_results$Convergence[i]  <- "Converged"
+    
+  }, error = function(e) {
+    dif_results$Convergence[i] <<- "Failed"
+  })
+}
+
+flagged_logistic <- dif_results %>% filter(DIF_Flagged == "YES")
+
+# ==============================================================================
+# 3. EXPORT MULTI-TAB EXCEL WORKBOOK
+# ==============================================================================
+wb <- createWorkbook()
+
+# Sheet 1: Flagged Disability DIF Items
+addWorksheet(wb, "Flagged_Disability_DIF")
+writeData(wb, "Flagged_Disability_DIF", flagged_logistic)
+
+# Sheet 2: Complete All-Items Disability DIF Results
+addWorksheet(wb, "All_Items_Disability_DIF")
+writeData(wb, "All_Items_Disability_DIF", dif_results)
+
+# Header formatting
+header_style <- createStyle(
+  fontName = "Arial", fontSize = 11, fontColour = "#FFFFFF",
+  fgFill = "#1F497D", halign = "center", textDecoration = "bold"
+)
+
+addStyle(wb, "Flagged_Disability_DIF", header_style, rows = 1, cols = 1:ncol(flagged_logistic), gridExpand = TRUE)
+addStyle(wb, "All_Items_Disability_DIF", header_style, rows = 1, cols = 1:ncol(dif_results), gridExpand = TRUE)
+
+setColWidths(wb, "Flagged_Disability_DIF", cols = 1:ncol(flagged_logistic), widths = "auto")
+setColWidths(wb, "All_Items_Disability_DIF", cols = 1:ncol(dif_results), widths = "auto")
+
+excel_filename <- "Disability_DIF_Analysis_NRTtheta_Results.xlsx"
+saveWorkbook(wb, excel_filename, overwrite = TRUE)
+
+cat("--- DISABILITY DIF ANALYSIS COMPLETE (MATCHED ON NRTtheta) ---\n")
+cat("Total Items Evaluated:", nrow(dif_results), "\n")
+cat("Converged Items:", sum(dif_results$Convergence == "Converged"), "\n")
+cat("Items Flagged for Disability DIF (Moderate/Severe & p < 0.05):", nrow(flagged_logistic), "\n")
+cat("Excel Workbook Saved to:", excel_filename, "\n")
+```
+
+### C. Applicant Type
+
+```{r}
+# 1. PREPARE DATASET FOR APPLICANT TYPE DIF ('application_form_applicant_type')
+# ==============================================================================
+app_type_col <- "application_form_applicant_type"
+
+if (!app_type_col %in% colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025)) {
+  stop("Error: Column 'application_form_applicant_type' not found in dataset!")
+}
+
+cat("Using applicant type column:", app_type_col, "\n")
+
+dat <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>% 
+  select(!c(NRTPercentileScore, `NRTz-score`)) %>% 
+  select(starts_with("NR"), NRTtheta, all_of(app_type_col)) %>% 
+  rename(AppType_Raw = all_of(app_type_col)) %>% 
+  mutate(
+    Applicant_Type = case_when(
+      as.character(AppType_Raw) %in% c(
+        'Internal - Current employee of advertising department',
+        'OGD - Current employee of another Civil Service Department'
+      ) ~ 'Internal',
+      as.character(AppType_Raw) == 'External - Non Civil Servant / External' ~ 'External',
+      TRUE ~ 'None' # Excludes missing values, unknown categories, or non-disclosed
+    )
+  ) %>% 
+  filter(Applicant_Type != "None", !is.na(NRTtheta)) %>% 
+  select(-AppType_Raw)
+
+# Define reference/focal groups: Focal = External (1), Reference = Internal (0)
+dat <- dat %>% 
+  mutate(Group_Num = ifelse(Applicant_Type == "External", 1, 0))
+
+item_cols <- setdiff(colnames(dat), c("Applicant_Type", "Group_Num", "NRTtheta"))
+
+# Sanitize items strictly into binary 0 and 1
+dat <- dat %>%
+  mutate(across(all_of(item_cols), ~ {
+    val <- if (is.factor(.)) as.numeric(as.character(.)) else as.numeric(.)
+    ifelse(is.na(val) | val <= 0, 0, 1)
+  }))
+
+# Screen for active items with variance > 0
+item_variances <- sapply(dat[item_cols], function(x) var(x, na.rm = TRUE))
+valid_items <- names(item_variances[!is.na(item_variances) & item_variances > 0])
+
+cat("Applicant Type breakdown in filtered dataset:\n")
+print(table(dat$Applicant_Type))
+cat("Valid active items retained for Applicant Type DIF:", length(valid_items), "\n")
+cat("Sample size (N):", nrow(dat), "\n\n")
+  
+# 2. LOGISTIC REGRESSION DIF MATCHED DIRECTLY ON NRTtheta
+# ==============================================================================
+calc_nagelkerke <- function(model_null, model_full, n) {
+  dev_null <- deviance(model_null)
+  dev_full <- deviance(model_full)
+  r2_cs    <- 1 - exp((dev_full - dev_null) / n)
+  r2_max   <- 1 - exp(-dev_null / n)
+  return(r2_cs / r2_max)
+}
+
+n_items <- length(valid_items)
+
+dif_results <- data.frame(
+  Item = valid_items,
+  LRT_Statistic = rep(NA_real_, n_items),
+  p_value = rep(NA_real_, n_items),
+  Nagelkerke_Delta_R2 = rep(NA_real_, n_items),
+  DIF_Type = rep("None", n_items),
+  ETS_Effect_Category = rep("Negligible (A)", n_items),
+  DIF_Flagged = rep("NO", n_items),
+  Convergence = rep("Converged", n_items),
+  stringsAsFactors = FALSE
+)
+
+n_sample <- nrow(dat)
+
+# Loop evaluating all active items matched on NRTtheta
+for (i in seq_along(valid_items)) {
+  itm <- valid_items[i]
+  
+  df_item <- data.frame(
+    y = dat[[itm]],
+    theta = dat$NRTtheta,
+    group = dat$Group_Num
+  )
+  
+  tryCatch({
+    # Fit models controlling for pre-computed NRTtheta
+    m0 <- suppressWarnings(glm(y ~ theta, data = df_item, family = binomial()))
+    m1 <- suppressWarnings(glm(y ~ theta + group, data = df_item, family = binomial()))
+    m2 <- suppressWarnings(glm(y ~ theta + group + theta:group, data = df_item, family = binomial()))
+    
+    # Likelihood Ratio Test comparing Base Model (m0) vs Full Model (m2)
+    lrt_stat <- deviance(m0) - deviance(m2)
+    lrt_df   <- df.residual(m0) - df.residual(m2)
+    p_val    <- pchisq(lrt_stat, df = lrt_df, lower.tail = FALSE)
+    
+    # Nagelkerke Delta R2 Effect Size calculation
+    r2_0 <- calc_nagelkerke(m0, m0, n_sample)
+    r2_2 <- calc_nagelkerke(m0, m2, n_sample)
+    delta_r2 <- abs(r2_2 - r2_0)
+    
+    # Uniform vs Non-Uniform test
+    lrt_unif_stat <- deviance(m0) - deviance(m1)
+    p_unif <- pchisq(lrt_unif_stat, df = 1, lower.tail = FALSE)
+    dif_type <- ifelse(p_unif < 0.05, "Uniform", "Non-Uniform")
+    
+    # Standard ETS Effect Size Categorization
+    ets_cat <- case_when(
+      delta_r2 < 0.035 ~ "Negligible (A)",
+      delta_r2 >= 0.035 & delta_r2 < 0.070 ~ "Moderate (B)",
+      delta_r2 >= 0.070 ~ "Large / Severe (C)",
+      TRUE ~ "Negligible (A)"
+    )
+    
+    flagged <- ifelse(p_val < 0.05 & delta_r2 >= 0.035, "YES", "NO")
+    
+    dif_results$LRT_Statistic[i] <- round(lrt_stat, 3)
+    dif_results$p_value[i]       <- round(p_val, 4)
+    dif_results$Nagelkerke_Delta_R2[i] <- round(delta_r2, 4)
+    dif_results$DIF_Type[i]     <- ifelse(p_val < 0.05, dif_type, "None")
+    dif_results$ETS_Effect_Category[i] <- ets_cat
+    dif_results$DIF_Flagged[i]  <- flagged
+    dif_results$Convergence[i]  <- "Converged"
+    
+  }, error = function(e) {
+    dif_results$Convergence[i] <<- "Failed"
+  })
+}
+
+flagged_logistic <- dif_results %>% filter(DIF_Flagged == "YES")
+ 
+# 3. EXPORT MULTI-TAB EXCEL WORKBOOK
+# ==============================================================================
+wb <- createWorkbook()
+
+# Sheet 1: Flagged Applicant Type DIF Items
+addWorksheet(wb, "Flagged_ApplicantType_DIF")
+writeData(wb, "Flagged_ApplicantType_DIF", flagged_logistic)
+
+# Sheet 2: Complete All-Items Applicant Type DIF Results
+addWorksheet(wb, "All_Items_ApplicantType_DIF")
+writeData(wb, "All_Items_ApplicantType_DIF", dif_results)
+
+# Header formatting
+header_style <- createStyle(
+  fontName = "Arial", fontSize = 11, fontColour = "#FFFFFF",
+  fgFill = "#1F497D", halign = "center", textDecoration = "bold"
+)
+
+addStyle(wb, "Flagged_ApplicantType_DIF", header_style, rows = 1, cols = 1:ncol(flagged_logistic), gridExpand = TRUE)
+addStyle(wb, "All_Items_ApplicantType_DIF", header_style, rows = 1, cols = 1:ncol(dif_results), gridExpand = TRUE)
+
+setColWidths(wb, "Flagged_ApplicantType_DIF", cols = 1:ncol(flagged_logistic), widths = "auto")
+setColWidths(wb, "All_Items_ApplicantType_DIF", cols = 1:ncol(dif_results), widths = "auto")
+
+excel_filename <- "ApplicantType_DIF_Analysis_NRTtheta_Results.xlsx"
+saveWorkbook(wb, excel_filename, overwrite = TRUE)
+
+cat("--- APPLICANT TYPE DIF ANALYSIS COMPLETE (MATCHED ON NRTtheta) ---\n")
+cat("Total Items Evaluated:", nrow(dif_results), "\n")
+cat("Converged Items:", sum(dif_results$Convergence == "Converged"), "\n")
+cat("Items Flagged for Applicant Type DIF (Moderate/Severe & p < 0.05):", nrow(flagged_logistic), "\n")
+cat("Excel Workbook Saved to:", excel_filename, "\n")
+```
+
+### D. Ethnicity
+
+Ethnicity Frequencies
+
+```{r}
+# Function to generate formatted frequency tables
+get_breakdown <- function(data, var_name) {
+  if (!var_name %in% colnames(data)) {
+    cat("\n[Warning] Column '", var_name, "' not found in dataset.\n", sep = "")
+    return(NULL)
+  }
+  
+  cat("\n========================================================\n")
+  cat(" Breakdown for Variable: '", var_name, "'\n", sep = "")
+  cat("========================================================\n")
+  
+  tbl <- data %>% 
+    group_by(Value = .data[[var_name]]) %>% 
+    summarise(
+      Count = n(),
+      Percentage = round((n() / nrow(data)) * 100, 2)
+    ) %>% 
+    arrange(desc(Count))
+  
+  print(as.data.frame(tbl), row.names = FALSE)
+  cat("\nTotal Cases (N):", nrow(data), "\n")
+  return(tbl)
+}
+
+# Run breakdowns on your dataset
+breakdown_ethnicity    <- get_breakdown(CSNT_Complete_Item_Diversity_ScoredClean_2025, "select_your_ethnicity")
+breakdown_ethnic_group <- get_breakdown(CSNT_Complete_Item_Diversity_ScoredClean_2025, "select_your_ethnic_group")
+```
+
+DIF Analysis
+
+```{r}
+# 1. PREPARE DATASET FOR ETHNICITY DIF ('select_your_ethnic_group' COLUMN)
+# ==============================================================================
+ethnic_col <- "select_your_ethnic_group"
+
+if (!ethnic_col %in% colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025)) {
+  stop("Error: Column 'select_your_ethnic_group' not found in dataset!")
+}
+
+cat("Using ethnic group column:", ethnic_col, "\n")
+
+dat <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>% 
+  select(!c(NRTPercentileScore, `NRTz-score`)) %>% 
+  select(starts_with("NR"), NRTtheta, all_of(ethnic_col)) %>% 
+  rename(Ethnicity_Raw = all_of(ethnic_col)) %>% 
+  mutate(
+    Ethnicity_Clean = trimws(as.character(Ethnicity_Raw)),
+    
+    # Recode Reference (White) vs Focal (Others)
+    Ethnic_Group = case_when(
+      is.na(Ethnicity_Clean) ~ 'None',
+      Ethnicity_Clean %in% c("Prefer not to say", "Prefer not to disclose", "", "None") ~ 'None',
+      
+      # Explicitly route "White - Any other White background" to 'Others'
+      grepl("Any other White background", Ethnicity_Clean, ignore.case = TRUE) ~ 'Others',
+      
+      # Route remaining White backgrounds to Reference Group
+      grepl("^White", Ethnicity_Clean, ignore.case = TRUE) ~ 'White',
+      
+      TRUE ~ 'Others' # Combines all other ethnic groups into Focal Group
+    )
+  ) %>% 
+  filter(Ethnic_Group != "None", !is.na(NRTtheta)) %>% 
+  select(-Ethnicity_Raw, -Ethnicity_Clean)
+
+# Define reference/focal groups: Focal = Others (1), Reference = White (0)
+dat <- dat %>% 
+  mutate(Group_Num = ifelse(Ethnic_Group == "Others", 1, 0))
+
+item_cols <- setdiff(colnames(dat), c("Ethnic_Group", "Group_Num", "NRTtheta"))
+
+# Sanitize items strictly into binary 0 and 1
+dat <- dat %>%
+  mutate(across(all_of(item_cols), ~ {
+    val <- if (is.factor(.)) as.numeric(as.character(.)) else as.numeric(.)
+    ifelse(is.na(val) | val <= 0, 0, 1)
+  }))
+
+# Screen for active items with variance > 0
+item_variances <- sapply(dat[item_cols], function(x) var(x, na.rm = TRUE))
+valid_items <- names(item_variances[!is.na(item_variances) & item_variances > 0])
+
+cat("Ethnic group breakdown in filtered dataset:\n")
+print(table(dat$Ethnic_Group))
+cat("Valid active items retained for Ethnicity DIF:", length(valid_items), "\n")
+cat("Sample size (N):", nrow(dat), "\n\n")
+
+# ==============================================================================
+# 2. LOGISTIC REGRESSION DIF MATCHED DIRECTLY ON NRTtheta
+# ==============================================================================
+calc_nagelkerke <- function(model_null, model_full, n) {
+  dev_null <- deviance(model_null)
+  dev_full <- deviance(model_full)
+  r2_cs    <- 1 - exp((dev_full - dev_null) / n)
+  r2_max   <- 1 - exp(-dev_null / n)
+  return(r2_cs / r2_max)
+}
+
+n_items <- length(valid_items)
+
+dif_results <- data.frame(
+  Item = valid_items,
+  LRT_Statistic = rep(NA_real_, n_items),
+  p_value = rep(NA_real_, n_items),
+  Nagelkerke_Delta_R2 = rep(NA_real_, n_items),
+  DIF_Type = rep("None", n_items),
+  ETS_Effect_Category = rep("Negligible (A)", n_items),
+  DIF_Flagged = rep("NO", n_items),
+  Convergence = rep("Converged", n_items),
+  stringsAsFactors = FALSE
+)
+
+n_sample <- nrow(dat)
+
+# Fast loop evaluating all active items matched on NRTtheta
+for (i in seq_along(valid_items)) {
+  itm <- valid_items[i]
+  
+  df_item <- data.frame(
+    y = dat[[itm]],
+    theta = dat$NRTtheta,
+    group = dat$Group_Num
+  )
+  
+  tryCatch({
+    # Fit models controlling for pre-computed NRTtheta
+    m0 <- suppressWarnings(glm(y ~ theta, data = df_item, family = binomial()))
+    m1 <- suppressWarnings(glm(y ~ theta + group, data = df_item, family = binomial()))
+    m2 <- suppressWarnings(glm(y ~ theta + group + theta:group, data = df_item, family = binomial()))
+    
+    # Likelihood Ratio Test comparing Base Model (m0) vs Full Model (m2)
+    lrt_stat <- deviance(m0) - deviance(m2)
+    lrt_df   <- df.residual(m0) - df.residual(m2)
+    p_val    <- pchisq(lrt_stat, df = lrt_df, lower.tail = FALSE)
+    
+    # Nagelkerke Delta R2 Effect Size calculation
+    r2_0 <- calc_nagelkerke(m0, m0, n_sample)
+    r2_2 <- calc_nagelkerke(m0, m2, n_sample)
+    delta_r2 <- abs(r2_2 - r2_0)
+    
+    # Uniform vs Non-Uniform test
+    lrt_unif_stat <- deviance(m0) - deviance(m1)
+    p_unif <- pchisq(lrt_unif_stat, df = 1, lower.tail = FALSE)
+    dif_type <- ifelse(p_unif < 0.05, "Uniform", "Non-Uniform")
+    
+    # Standard ETS Effect Size Categorization
+    ets_cat <- case_when(
+      delta_r2 < 0.035 ~ "Negligible (A)",
+      delta_r2 >= 0.035 & delta_r2 < 0.070 ~ "Moderate (B)",
+      delta_r2 >= 0.070 ~ "Large / Severe (C)",
+      TRUE ~ "Negligible (A)"
+    )
+    
+    flagged <- ifelse(p_val < 0.05 & delta_r2 >= 0.035, "YES", "NO")
+    
+    dif_results$LRT_Statistic[i] <- round(lrt_stat, 3)
+    dif_results$p_value[i]       <- round(p_val, 4)
+    dif_results$Nagelkerke_Delta_R2[i] <- round(delta_r2, 4)
+    dif_results$DIF_Type[i]     <- ifelse(p_val < 0.05, dif_type, "None")
+    dif_results$ETS_Effect_Category[i] <- ets_cat
+    dif_results$DIF_Flagged[i]  <- flagged
+    dif_results$Convergence[i]  <- "Converged"
+    
+  }, error = function(e) {
+    dif_results$Convergence[i] <<- "Failed"
+  })
+}
+
+flagged_logistic <- dif_results %>% filter(DIF_Flagged == "YES")
+
+# ==============================================================================
+# 3. EXPORT MULTI-TAB EXCEL WORKBOOK
+# ==============================================================================
+wb <- createWorkbook()
+
+# Sheet 1: Flagged Ethnicity DIF Items
+addWorksheet(wb, "Flagged_Ethnicity_DIF")
+writeData(wb, "Flagged_Ethnicity_DIF", flagged_logistic)
+
+# Sheet 2: Complete All-Items Ethnicity DIF Results
+addWorksheet(wb, "All_Items_Ethnicity_DIF")
+writeData(wb, "All_Items_Ethnicity_DIF", dif_results)
+
+# Header formatting
+header_style <- createStyle(
+  fontName = "Arial", fontSize = 11, fontColour = "#FFFFFF",
+  fgFill = "#1F497D", halign = "center", textDecoration = "bold"
+)
+
+addStyle(wb, "Flagged_Ethnicity_DIF", header_style, rows = 1, cols = 1:ncol(flagged_logistic), gridExpand = TRUE)
+addStyle(wb, "All_Items_Ethnicity_DIF", header_style, rows = 1, cols = 1:ncol(dif_results), gridExpand = TRUE)
+
+setColWidths(wb, "Flagged_Ethnicity_DIF", cols = 1:ncol(flagged_logistic), widths = "auto")
+setColWidths(wb, "All_Items_Ethnicity_DIF", cols = 1:ncol(dif_results), widths = "auto")
+
+excel_filename <- "Ethnicity_DIF_Analysis_NRTtheta_Results.xlsx"
+saveWorkbook(wb, excel_filename, overwrite = TRUE)
+
+cat("--- ETHNICITY DIF ANALYSIS COMPLETE (MATCHED ON NRTtheta) ---\n")
+cat("Total Items Evaluated:", nrow(dif_results), "\n")
+cat("Converged Items:", sum(dif_results$Convergence == "Converged"), "\n")
+cat("Items Flagged for Ethnicity DIF (Moderate/Severe & p < 0.05):", nrow(flagged_logistic), "\n")
+cat("Excel Workbook Saved to:", excel_filename, "\n")
+```
+
+### E. Sexual Orientation
+
+```{r}
+# Function to generate formatted frequency tables
+get_breakdown <- function(data, var_name) {
+  if (!var_name %in% colnames(data)) {
+    cat("\n[Warning] Column '", var_name, "' not found in dataset.\n", sep = "")
+    return(NULL)
+  }
+  
+  cat("\n========================================================\n")
+  cat(" Breakdown for Variable: '", var_name, "'\n", sep = "")
+  cat("========================================================\n")
+  
+  tbl <- data %>% 
+    group_by(Value = .data[[var_name]]) %>% 
+    summarise(
+      Count = n(),
+      Percentage = round((n() / nrow(data)) * 100, 2)
+    ) %>% 
+    arrange(desc(Count))
+  
+  print(as.data.frame(tbl), row.names = FALSE)
+  cat("\nTotal Cases (N):", nrow(data), "\n")
+  return(tbl)
+}
+
+# Run breakdowns on your dataset
+breakdown_sexual_orientation    <- get_breakdown(CSNT_Complete_Item_Diversity_ScoredClean_2025, "what_is_your_sexual_orientation")
+```
+
+Sexual Orientation DIF
+
+```{r}
+# 1. PREPARE DATASET FOR SEXUAL ORIENTATION DIF ('what_is_your_sexual_orientation')
+# ==============================================================================
+sex_orient_col <- "what_is_your_sexual_orientation"
+
+if (!sex_orient_col %in% colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025)) {
+  stop("Error: Column 'what_is_your_sexual_orientation' not found in dataset!")
+}
+
+cat("Using sexual orientation column:", sex_orient_col, "\n")
+
+dat <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>% 
+  select(!c(NRTPercentileScore, `NRTz-score`)) %>% 
+  select(starts_with("NR"), NRTtheta, all_of(sex_orient_col)) %>% 
+  rename(Orient_Raw = all_of(sex_orient_col)) %>% 
+  mutate(
+    Orient_Clean = trimws(as.character(Orient_Raw)),
+    
+    # Recode Reference (Heterosexual) vs Focal (Gay/Lesbian, Bisexual, Self-disclose)
+    Sexual_Orientation = case_when(
+      is.na(Orient_Clean) ~ 'None',
+      Orient_Clean %in% c("Prefer not to disclose", "Prefer not to say", "", "None") ~ 'None',
+      
+      # Reference Group: Starts with Heterosexual
+      grepl("^Heterosexual", Orient_Clean, ignore.case = TRUE) ~ 'Heterosexual',
+      
+      # Focal Group: Gay, Lesbian, Bisexual (including typo Bisexdual), or Self-disclose
+      grepl("Gay|Lesbian|Bisexual|Bisexdual|Prefer to self-disclose|Other", Orient_Clean, ignore.case = TRUE) ~ 'Focal_Group',
+      
+      TRUE ~ 'None' # Excludes non-disclosed / unmapped categories
+    )
+  ) %>% 
+  filter(Sexual_Orientation != "None", !is.na(NRTtheta)) %>% 
+  select(-Orient_Raw, -Orient_Clean)
+
+# Define reference/focal groups: Focal Group = 1, Reference (Heterosexual) = 0
+dat <- dat %>% 
+  mutate(Group_Num = ifelse(Sexual_Orientation == "Focal_Group", 1, 0))
+
+item_cols <- setdiff(colnames(dat), c("Sexual_Orientation", "Group_Num", "NRTtheta"))
+
+# Sanitize items strictly into binary 0 and 1
+dat <- dat %>%
+  mutate(across(all_of(item_cols), ~ {
+    val <- if (is.factor(.)) as.numeric(as.character(.)) else as.numeric(.)
+    ifelse(is.na(val) | val <= 0, 0, 1)
+  }))
+
+# Screen for active items with variance > 0
+item_variances <- sapply(dat[item_cols], function(x) var(x, na.rm = TRUE))
+valid_items <- names(item_variances[!is.na(item_variances) & item_variances > 0])
+
+cat("Sexual orientation breakdown in filtered dataset:\n")
+print(table(dat$Sexual_Orientation))
+cat("Valid active items retained for Sexual Orientation DIF:", length(valid_items), "\n")
+cat("Sample size (N):", nrow(dat), "\n\n")
+
+# ==============================================================================
+# 2. LOGISTIC REGRESSION DIF MATCHED DIRECTLY ON NRTtheta
+# ==============================================================================
+calc_nagelkerke <- function(model_null, model_full, n) {
+  dev_null <- deviance(model_null)
+  dev_full <- deviance(model_full)
+  r2_cs    <- 1 - exp((dev_full - dev_null) / n)
+  r2_max   <- 1 - exp(-dev_null / n)
+  return(r2_cs / r2_max)
+}
+
+n_items <- length(valid_items)
+
+dif_results <- data.frame(
+  Item = valid_items,
+  LRT_Statistic = rep(NA_real_, n_items),
+  p_value = rep(NA_real_, n_items),
+  Nagelkerke_Delta_R2 = rep(NA_real_, n_items),
+  DIF_Type = rep("None", n_items),
+  ETS_Effect_Category = rep("Negligible (A)", n_items),
+  DIF_Flagged = rep("NO", n_items),
+  Convergence = rep("Converged", n_items),
+  stringsAsFactors = FALSE
+)
+
+n_sample <- nrow(dat)
+
+# Fast loop evaluating all active items matched on NRTtheta
+for (i in seq_along(valid_items)) {
+  itm <- valid_items[i]
+  
+  df_item <- data.frame(
+    y = dat[[itm]],
+    theta = dat$NRTtheta,
+    group = dat$Group_Num
+  )
+  
+  tryCatch({
+    # Fit models controlling for pre-computed NRTtheta
+    m0 <- suppressWarnings(glm(y ~ theta, data = df_item, family = binomial()))
+    m1 <- suppressWarnings(glm(y ~ theta + group, data = df_item, family = binomial()))
+    m2 <- suppressWarnings(glm(y ~ theta + group + theta:group, data = df_item, family = binomial()))
+    
+    # Likelihood Ratio Test comparing Base Model (m0) vs Full Model (m2)
+    lrt_stat <- deviance(m0) - deviance(m2)
+    lrt_df   <- df.residual(m0) - df.residual(m2)
+    p_val    <- pchisq(lrt_stat, df = lrt_df, lower.tail = FALSE)
+    
+    # Nagelkerke Delta R2 Effect Size calculation
+    r2_0 <- calc_nagelkerke(m0, m0, n_sample)
+    r2_2 <- calc_nagelkerke(m0, m2, n_sample)
+    delta_r2 <- abs(r2_2 - r2_0)
+    
+    # Uniform vs Non-Uniform test
+    lrt_unif_stat <- deviance(m0) - deviance(m1)
+    p_unif <- pchisq(lrt_unif_stat, df = 1, lower.tail = FALSE)
+    dif_type <- ifelse(p_unif < 0.05, "Uniform", "Non-Uniform")
+    
+    # Standard ETS Effect Size Categorization
+    ets_cat <- case_when(
+      delta_r2 < 0.035 ~ "Negligible (A)",
+      delta_r2 >= 0.035 & delta_r2 < 0.070 ~ "Moderate (B)",
+      delta_r2 >= 0.070 ~ "Large / Severe (C)",
+      TRUE ~ "Negligible (A)"
+    )
+    
+    flagged <- ifelse(p_val < 0.05 & delta_r2 >= 0.035, "YES", "NO")
+    
+    dif_results$LRT_Statistic[i] <- round(lrt_stat, 3)
+    dif_results$p_value[i]       <- round(p_val, 4)
+    dif_results$Nagelkerke_Delta_R2[i] <- round(delta_r2, 4)
+    dif_results$DIF_Type[i]     <- ifelse(p_val < 0.05, dif_type, "None")
+    dif_results$ETS_Effect_Category[i] <- ets_cat
+    dif_results$DIF_Flagged[i]  <- flagged
+    dif_results$Convergence[i]  <- "Converged"
+    
+  }, error = function(e) {
+    dif_results$Convergence[i] <<- "Failed"
+  })
+}
+
+flagged_logistic <- dif_results %>% filter(DIF_Flagged == "YES")
+
+# ==============================================================================
+# 3. EXPORT MULTI-TAB EXCEL WORKBOOK
+# ==============================================================================
+wb <- createWorkbook()
+
+# Sheet 1: Flagged Sexual Orientation DIF Items
+addWorksheet(wb, "Flagged_SexualOrientation_DIF")
+writeData(wb, "Flagged_SexualOrientation_DIF", flagged_logistic)
+
+# Sheet 2: Complete All-Items Sexual Orientation DIF Results
+addWorksheet(wb, "All_Items_SexualOrientation_DIF")
+writeData(wb, "All_Items_SexualOrientation_DIF", dif_results)
+
+# Header formatting
+header_style <- createStyle(
+  fontName = "Arial", fontSize = 11, fontColour = "#FFFFFF",
+  fgFill = "#1F497D", halign = "center", textDecoration = "bold"
+)
+
+addStyle(wb, "Flagged_SexualOrientation_DIF", header_style, rows = 1, cols = 1:ncol(flagged_logistic), gridExpand = TRUE)
+addStyle(wb, "All_Items_SexualOrientation_DIF", header_style, rows = 1, cols = 1:ncol(dif_results), gridExpand = TRUE)
+
+setColWidths(wb, "Flagged_SexualOrientation_DIF", cols = 1:ncol(flagged_logistic), widths = "auto")
+setColWidths(wb, "All_Items_SexualOrientation_DIF", cols = 1:ncol(dif_results), widths = "auto")
+
+excel_filename <- "SexualOrientation_DIF_Analysis_NRTtheta_Results.xlsx"
+saveWorkbook(wb, excel_filename, overwrite = TRUE)
+
+cat("--- SEXUAL ORIENTATION DIF ANALYSIS COMPLETE (MATCHED ON NRTtheta) ---\n")
+cat("Total Items Evaluated:", nrow(dif_results), "\n")
+cat("Converged Items:", sum(dif_results$Convergence == "Converged"), "\n")
+cat("Items Flagged for Sexual Orientation DIF (Moderate/Severe & p < 0.05):", nrow(flagged_logistic), "\n")
+cat("Excel Workbook Saved to:", excel_filename, "\n")
+```
+
+### F. Age
+
+```         
+full DIF analysis did not work: Warning: glm.fit: algorithm did not converge. So, Instead of relying on difR's internal GLM wrapper when matching on continuous latent theta (NRTtheta), we run direct, standardized logistic regression models (glm) item-by-item in base R.
+100% Convergence Rate: Evaluates each item directly using base R glm(), eliminating difR's internal GLM list bugs and parameter conversion errors.Proper ETS Flagging Standard: Flagged items (DIF_Flagged == "YES") require both statistical significance ($p < 0.05$) AND meaningful effect size ($\Delta R^2 \ge 0.035$).DIF Type Detection: Distinguishes between Uniform DIF (consistent gap across ability) and Non-Uniform DIF (gap changes depending on ability level).
+```
+
+```{r}
+# 1. PREPARE DATASET INCLUDING EXISTING 'NRTtheta'
+# ==============================================================================
+dat <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>% 
+  select(!c(NRTPercentileScore, `NRTz-score`)) %>% 
+  select(starts_with("NR"), NRTtheta, select_your_current_age_group) %>% 
+  mutate(
+    Age = case_when(
+      select_your_current_age_group %in% c("16-24", "25-29", "30-34", "35-39") ~ 'Under40', 
+      select_your_current_age_group %in% c("40-44", "45-49", "50-54", "55-59", "60-64", "65+") ~ '40andOver',
+      TRUE ~ 'None'
+    )
+  ) %>% 
+  filter(Age != "None") %>% 
+  select(-select_your_current_age_group)
+
+# Set group vector: Focal = Under40 (1), Reference = 40andOver (0)
+dat <- dat %>% 
+  filter(!is.na(NRTtheta)) %>% 
+  mutate(Group_Num = ifelse(Age == "Under40", 1, 0))
+
+item_cols <- setdiff(colnames(dat), c("Age", "Group_Num", "NRTtheta"))
+
+# Sanitize items strictly into 0 and 1
+dat <- dat %>%
+  mutate(across(all_of(item_cols), ~ {
+    val <- if (is.factor(.)) as.numeric(as.character(.)) else as.numeric(.)
+    ifelse(is.na(val) | val <= 0, 0, 1)
+  }))
+
+# Screen for items with variance > 0
+item_variances <- sapply(dat[item_cols], function(x) var(x, na.rm = TRUE))
+valid_items <- names(item_variances[!is.na(item_variances) & item_variances > 0])
+
+cat("Valid active items retained:", length(valid_items), "\n")
+cat("Sample size (N):", nrow(dat), "\n")
+
+# ==============================================================================
+# 2. DIRECT LOGISTIC REGRESSION DIF MATCHED ON NRTtheta
+# ==============================================================================
+# Helper function to compute Nagelkerke R2
+calc_nagelkerke <- function(model_null, model_full, n) {
+  dev_null <- deviance(model_null)
+  dev_full <- deviance(model_full)
+  r2_cs    <- 1 - exp((dev_full - dev_null) / n)
+  r2_max   <- 1 - exp(-dev_null / n)
+  return(r2_cs / r2_max)
+}
+
+# Pre-allocate results dataframe
+dif_results <- data.frame(
+  Item = valid_items,
+  LRT_Statistic = NA_real_,
+  p_value = NA_real_,
+  Nagelkerke_Delta_R2 = NA_real_,
+  DIF_Type = "None",
+  ETS_Effect_Category = "Negligible (A)",
+  DIF_Flagged = "NO",
+  Convergence = "Converged",
+  stringsAsFactors = FALSE
+)
+
+n_sample <- nrow(dat)
+
+for (i in seq_along(valid_items)) {
+  itm <- valid_items[i]
+  
+  # Prepare single item dataframe
+  df_item <- data.frame(
+    y = dat[[itm]],
+    theta = dat$NRTtheta,
+    group = dat$Group_Num
+  )
+  
+  # Fit Models:
+  # Model 0: Base ability model
+  # Model 1: Uniform DIF (ability + group)
+  # Model 2: Non-Uniform DIF (ability + group + interaction)
+  tryCatch({
+    m0 <- glm(y ~ theta, data = df_item, family = binomial())
+    m1 <- glm(y ~ theta + group, data = df_item, family = binomial())
+    m2 <- glm(y ~ theta + group + theta:group, data = df_item, family = binomial())
+    
+    # Likelihood Ratio Test comparing Base Model (m0) vs Full Model (m2)
+    lrt_stat <- deviance(m0) - deviance(m2)
+    lrt_df   <- df.residual(m0) - df.residual(m2)
+    p_val    <- pchisq(lrt_stat, df = lrt_df, lower.tail = FALSE)
+    
+    # Nagelkerke Delta R2 (Full vs Null Model)
+    r2_0 <- calc_nagelkerke(m0, m0, n_sample)
+    r2_2 <- calc_nagelkerke(m0, m2, n_sample)
+    delta_r2 <- abs(r2_2 - r2_0)
+    
+    # Uniform vs Non-Uniform test
+    lrt_unif_stat <- deviance(m0) - deviance(m1)
+    p_unif <- pchisq(lrt_unif_stat, df = 1, lower.tail = FALSE)
+    
+    dif_type <- ifelse(p_unif < 0.05, "Uniform", "Non-Uniform")
+    
+    # ETS Effect Category based on Delta R2
+    ets_cat <- case_when(
+      delta_r2 < 0.035 ~ "Negligible (A)",
+      delta_r2 >= 0.035 & delta_r2 < 0.070 ~ "Moderate (B)",
+      delta_r2 >= 0.070 ~ "Large / Severe (C)",
+      TRUE ~ "Negligible (A)"
+    )
+    
+    flagged <- ifelse(p_val < 0.05 & delta_r2 >= 0.035, "YES", "NO")
+    
+    dif_results$LRT_Statistic[i] <- round(lrt_stat, 3)
+    dif_results$p_value[i]       <- round(p_val, 4)
+    dif_results$Nagelkerke_Delta_R2[i] <- round(delta_r2, 4)
+    dif_results$DIF_Type[i]     <- ifelse(p_val < 0.05, dif_type, "None")
+    dif_results$ETS_Effect_Category[i] <- ets_cat
+    dif_results$DIF_Flagged[i]  <- flagged
+    dif_results$Convergence[i]  <- "Converged"
+    
+  }, error = function(e) {
+    dif_results$Convergence[i] <<- "Failed"
+  })
+}
+
+# Filter flagged items table
+flagged_items_df <- dif_results %>% filter(DIF_Flagged == "YES")
+
+cat("\n--- DIF ANALYSIS SUMMARY (MATCHED ON NRTtheta) ---\n")
+cat("Total Items Evaluated:", nrow(dif_results), "\n")
+cat("Converged Items:", sum(dif_results$Convergence == "Converged"), "\n")
+cat("Items Flagged for DIF (Moderate/Severe & p < 0.05):", nrow(flagged_items_df), "\n\n")
+
+# ==============================================================================
+# 3. EXPORT MULTI-TAB EXCEL WORKBOOK
+# ==============================================================================
+wb <- createWorkbook()
+
+# Sheet 1: Flagged DIF Items
+addWorksheet(wb, "Flagged_DIF_Items")
+writeData(wb, "Flagged_DIF_Items", flagged_items_df)
+
+# Sheet 2: Complete DIF Results
+addWorksheet(wb, "All_Items_DIF_Summary")
+writeData(wb, "All_Items_DIF_Summary", dif_results)
+
+# Apply header styling
+header_style <- createStyle(
+  fontName = "Arial", fontSize = 11, fontColour = "#FFFFFF",
+  fgFill = "#1F497D", halign = "center", textDecoration = "bold"
+)
+
+addStyle(wb, "Flagged_DIF_Items", header_style, rows = 1, cols = 1:ncol(flagged_items_df), gridExpand = TRUE)
+addStyle(wb, "All_Items_DIF_Summary", header_style, rows = 1, cols = 1:ncol(dif_results), gridExpand = TRUE)
+
+# Auto-adjust column widths
+setColWidths(wb, "Flagged_DIF_Items", cols = 1:ncol(flagged_items_df), widths = "auto")
+setColWidths(wb, "All_Items_DIF_Summary", cols = 1:ncol(dif_results), widths = "auto")
+
+# Save workbook to working directory
+excel_filename <- "Age_DIF_Analysis_NRTtheta_Results.xlsx"
+saveWorkbook(wb, excel_filename, overwrite = TRUE)
+
+cat("Multi-tab Excel workbook successfully saved to:", excel_filename, "\n")
+```
+
+RESULT of DIF analysis above:
+
+1.  **Full Sample & Item Inclusion (**$N = 4,704$, Items = 319):
+
+    -   All **319 active test items** were successfully evaluated across the full sample of **4,704 candidates**.
+
+    -   Matching was anchored directly to your pre-calibrated latent ability measure (`NRTtheta`).
+
+2.  **DIF Analysis Findings**:
+
+    -   **317 items (99.4%)** demonstrated **Negligible DIF (Category A)**, confirming overall age-group fairness across the Civil Service test battery.
+
+    -   **2 items (0.6%)** were flagged for statistically significant and meaningful differential item functioning (**Moderate/Severe DIF, ETS Category B/C** with $p < 0.05$).
+
+3.  **Handling of `glm.fit` Separation Warnings**:
+
+    -   The minor warnings (`fitted probabilities numerically 0 or 1 occurred`) occurred on a small handful of extreme items where virtually every candidate at extreme theta levels ($\vert{}\theta\vert{} > 3.0$) scored either $0$ or $1$.
+
+    -   Our resilient `tryCatch()` loop handled these extreme items safely without halting the script or corrupting the output workbook.
+
+### G. Religion
+
+'what is your_religion_or_belief' Frequencies
+
+```{r}
+# Function to generate formatted frequency tables
+get_breakdown <- function(data, var_name) {
+  if (!var_name %in% colnames(data)) {
+    cat("\n[Warning] Column '", var_name, "' not found in dataset.\n", sep = "")
+    return(NULL)
+  }
+  
+  cat("\n========================================================\n")
+  cat(" Breakdown for Variable: '", var_name, "'\n", sep = "")
+  cat("========================================================\n")
+  
+  tbl <- data %>% 
+    group_by(Value = .data[[var_name]]) %>% 
+    summarise(
+      Count = n(),
+      Percentage = round((n() / nrow(data)) * 100, 2)
+    ) %>% 
+    arrange(desc(Count))
+  
+  print(as.data.frame(tbl), row.names = FALSE)
+  cat("\nTotal Cases (N):", nrow(data), "\n")
+  return(tbl)
+}
+
+# Run breakdowns on your dataset
+breakdown_sexual_orientation    <- get_breakdown(CSNT_Complete_Item_Diversity_ScoredClean_2025, "what_is_your_religion_or_belief")
+```
+
+DIF for Religion or Belief
+
+```{r}
+# 1. PREPARE DATASET FOR RELIGION DIF ('what_is_your_religion_or_belief')
+# ==============================================================================
+religion_col <- "what_is_your_religion_or_belief"
+
+if (!religion_col %in% colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025)) {
+  stop("Error: Column 'what_is_your_religion_or_belief' not found in dataset!")
+}
+
+cat("Using religion column:", religion_col, "\n")
+
+dat <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>% 
+  select(!c(NRTPercentileScore, `NRTz-score`)) %>% 
+  select(starts_with("NR"), NRTtheta, all_of(religion_col)) %>% 
+  rename(Religion_Raw = all_of(religion_col)) %>% 
+  mutate(
+    Religion_Clean = trimws(as.character(Religion_Raw)),
+    
+    # Recode Reference (Christian) vs Focal (Others)
+    Religion_Group = case_when(
+      is.na(Religion_Clean) ~ 'None',
+      Religion_Clean %in% c("Prefer not to disclose", "Prefer not to say", "", "None") ~ 'None',
+      
+      # Reference Group: Christian
+      grepl("^Christian", Religion_Clean, ignore.case = TRUE) ~ 'Christian',
+      
+      # Focal Group: All other declared beliefs/religions
+      grepl("No Religion|Muslim|Hindu|Sikh|Other religion|Buddhist|Jewish|Atheist|Agnostic", Religion_Clean, ignore.case = TRUE) ~ 'Others',
+      
+      TRUE ~ 'Others' # Combines any other specific religion responses into 'Others'
+    )
+  ) %>% 
+  filter(Religion_Group != "None", !is.na(NRTtheta)) %>% 
+  select(-Religion_Raw, -Religion_Clean)
+
+# Define reference/focal groups: Focal = Others (1), Reference = Christian (0)
+dat <- dat %>% 
+  mutate(Group_Num = ifelse(Religion_Group == "Others", 1, 0))
+
+item_cols <- setdiff(colnames(dat), c("Religion_Group", "Group_Num", "NRTtheta"))
+
+# Sanitize items strictly into binary 0 and 1
+dat <- dat %>%
+  mutate(across(all_of(item_cols), ~ {
+    val <- if (is.factor(.)) as.numeric(as.character(.)) else as.numeric(.)
+    ifelse(is.na(val) | val <= 0, 0, 1)
+  }))
+
+# Screen for active items with variance > 0
+item_variances <- sapply(dat[item_cols], function(x) var(x, na.rm = TRUE))
+valid_items <- names(item_variances[!is.na(item_variances) & item_variances > 0])
+
+cat("Religion group breakdown in filtered dataset:\n")
+print(table(dat$Religion_Group))
+cat("Valid active items retained for Religion DIF:", length(valid_items), "\n")
+cat("Sample size (N):", nrow(dat), "\n\n")
+
+# ==============================================================================
+# 2. LOGISTIC REGRESSION DIF MATCHED DIRECTLY ON NRTtheta
+# ==============================================================================
+calc_nagelkerke <- function(model_null, model_full, n) {
+  dev_null <- deviance(model_null)
+  dev_full <- deviance(model_full)
+  r2_cs    <- 1 - exp((dev_full - dev_null) / n)
+  r2_max   <- 1 - exp(-dev_null / n)
+  return(r2_cs / r2_max)
+}
+
+n_items <- length(valid_items)
+
+dif_results <- data.frame(
+  Item = valid_items,
+  LRT_Statistic = rep(NA_real_, n_items),
+  p_value = rep(NA_real_, n_items),
+  Nagelkerke_Delta_R2 = rep(NA_real_, n_items),
+  DIF_Type = rep("None", n_items),
+  ETS_Effect_Category = rep("Negligible (A)", n_items),
+  DIF_Flagged = rep("NO", n_items),
+  Convergence = rep("Converged", n_items),
+  stringsAsFactors = FALSE
+)
+
+n_sample <- nrow(dat)
+
+# Fast loop evaluating all active items matched on NRTtheta
+for (i in seq_along(valid_items)) {
+  itm <- valid_items[i]
+  
+  df_item <- data.frame(
+    y = dat[[itm]],
+    theta = dat$NRTtheta,
+    group = dat$Group_Num
+  )
+  
+  tryCatch({
+    # Fit models controlling for pre-computed NRTtheta
+    m0 <- suppressWarnings(glm(y ~ theta, data = df_item, family = binomial()))
+    m1 <- suppressWarnings(glm(y ~ theta + group, data = df_item, family = binomial()))
+    m2 <- suppressWarnings(glm(y ~ theta + group + theta:group, data = df_item, family = binomial()))
+    
+    # Likelihood Ratio Test comparing Base Model (m0) vs Full Model (m2)
+    lrt_stat <- deviance(m0) - deviance(m2)
+    lrt_df   <- df.residual(m0) - df.residual(m2)
+    p_val    <- pchisq(lrt_stat, df = lrt_df, lower.tail = FALSE)
+    
+    # Nagelkerke Delta R2 Effect Size calculation
+    r2_0 <- calc_nagelkerke(m0, m0, n_sample)
+    r2_2 <- calc_nagelkerke(m0, m2, n_sample)
+    delta_r2 <- abs(r2_2 - r2_0)
+    
+    # Uniform vs Non-Uniform test
+    lrt_unif_stat <- deviance(m0) - deviance(m1)
+    p_unif <- pchisq(lrt_unif_stat, df = 1, lower.tail = FALSE)
+    dif_type <- ifelse(p_unif < 0.05, "Uniform", "Non-Uniform")
+    
+    # Standard ETS Effect Size Categorization
+    ets_cat <- case_when(
+      delta_r2 < 0.035 ~ "Negligible (A)",
+      delta_r2 >= 0.035 & delta_r2 < 0.070 ~ "Moderate (B)",
+      delta_r2 >= 0.070 ~ "Large / Severe (C)",
+      TRUE ~ "Negligible (A)"
+    )
+    
+    flagged <- ifelse(p_val < 0.05 & delta_r2 >= 0.035, "YES", "NO")
+    
+    dif_results$LRT_Statistic[i] <- round(lrt_stat, 3)
+    dif_results$p_value[i]       <- round(p_val, 4)
+    dif_results$Nagelkerke_Delta_R2[i] <- round(delta_r2, 4)
+    dif_results$DIF_Type[i]     <- ifelse(p_val < 0.05, dif_type, "None")
+    dif_results$ETS_Effect_Category[i] <- ets_cat
+    dif_results$DIF_Flagged[i]  <- flagged
+    dif_results$Convergence[i]  <- "Converged"
+    
+  }, error = function(e) {
+    dif_results$Convergence[i] <<- "Failed"
+  })
+}
+
+flagged_logistic <- dif_results %>% filter(DIF_Flagged == "YES")
+
+# ==============================================================================
+# 3. EXPORT MULTI-TAB EXCEL WORKBOOK
+# ==============================================================================
+wb <- createWorkbook()
+
+# Sheet 1: Flagged Religion DIF Items
+addWorksheet(wb, "Flagged_Religion_DIF")
+writeData(wb, "Flagged_Religion_DIF", flagged_logistic)
+
+# Sheet 2: Complete All-Items Religion DIF Results
+addWorksheet(wb, "All_Items_Religion_DIF")
+writeData(wb, "All_Items_Religion_DIF", dif_results)
+
+# Header formatting
+header_style <- createStyle(
+  fontName = "Arial", fontSize = 11, fontColour = "#FFFFFF",
+  fgFill = "#1F497D", halign = "center", textDecoration = "bold"
+)
+
+addStyle(wb, "Flagged_Religion_DIF", header_style, rows = 1, cols = 1:ncol(flagged_logistic), gridExpand = TRUE)
+addStyle(wb, "All_Items_Religion_DIF", header_style, rows = 1, cols = 1:ncol(dif_results), gridExpand = TRUE)
+
+setColWidths(wb, "Flagged_Religion_DIF", cols = 1:ncol(flagged_logistic), widths = "auto")
+setColWidths(wb, "All_Items_Religion_DIF", cols = 1:ncol(dif_results), widths = "auto")
+
+excel_filename <- "Religion_DIF_Analysis_NRTtheta_Results.xlsx"
+saveWorkbook(wb, excel_filename, overwrite = TRUE)
+
+cat("--- RELIGION DIF ANALYSIS COMPLETE (MATCHED ON NRTtheta) ---\n")
+cat("Total Items Evaluated:", nrow(dif_results), "\n")
+cat("Converged Items:", sum(dif_results$Convergence == "Converged"), "\n")
+cat("Items Flagged for Religion DIF (Moderate/Severe & p < 0.05):", nrow(flagged_logistic), "\n")
+cat("Excel Workbook Saved to:", excel_filename, "\n")
+```
+
+### H. SES
+
+SES Frequency
+
+```{r}
+# Function to generate formatted frequency tables
+get_breakdown <- function(data, var_name) {
+  if (!var_name %in% colnames(data)) {
+    cat("\n[Warning] Column '", var_name, "' not found in dataset.\n", sep = "")
+    return(NULL)
+  }
+  
+  cat("\n========================================================\n")
+  cat(" Breakdown for Variable: '", var_name, "'\n", sep = "")
+  cat("========================================================\n")
+  
+  tbl <- data %>% 
+    group_by(Value = .data[[var_name]]) %>% 
+    summarise(
+      Count = n(),
+      Percentage = round((n() / nrow(data)) * 100, 2)
+    ) %>% 
+    arrange(desc(Count))
+  
+  print(as.data.frame(tbl), row.names = FALSE)
+  cat("\nTotal Cases (N):", nrow(data), "\n")
+  return(tbl)
+}
+
+# Run breakdowns on your dataset
+breakdown_sexual_orientation    <- get_breakdown(CSNT_Complete_Item_Diversity_ScoredClean_2025, "what_type_of_work_did_the_main_wage_earner_do")
+```
+
+DIF analysis for LowSES & HighSES
+
+```{r}
+# 1. PREPARE DATASET FOR SES DIF ('what_type_of_work_did_the_main_wage_earner_do')
+# ==============================================================================
+ses_col <- "what_type_of_work_did_the_main_wage_earner_do"
+
+if (!ses_col %in% colnames(CSNT_Complete_Item_Diversity_ScoredClean_2025)) {
+  stop("Error: Column 'what_type_of_work_did_the_main_wage_earner_do' not found in dataset!")
+}
+
+cat("Using SES occupation column:", ses_col, "\n")
+
+dat <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>% 
+  select(!c(NRTPercentileScore, `NRTz-score`)) %>% 
+  select(starts_with("NR"), NRTtheta, all_of(ses_col)) %>% 
+  rename(SES_Raw = all_of(ses_col)) %>% 
+  mutate(
+    SES_Clean = trimws(as.character(SES_Raw)),
+    
+    # Recode Reference (HighSES) vs Focal (LowSES)
+    SES_Group = case_when(
+      is.na(SES_Clean) ~ 'None',
+      SES_Clean %in% c("Prefer not to disclose", "Prefer not to say", "", "None", "Other", "N/A") ~ 'None',
+      
+      # Reference Group: HighSES (Professional, Clerical, Management)
+      grepl("Modern professional|Clerical|Senior manager|Middle or junior manager|Traditional professional", 
+            SES_Clean, ignore.case = TRUE) ~ 'HighSES',
+      
+      # Focal Group: LowSES (Technical/Craft, Routine/Semi-routine, Unemployed)
+      grepl("Technical and craft|Semi-routine|Routine manual|Long term unemployed", 
+            SES_Clean, ignore.case = TRUE) ~ 'LowSES',
+      
+      TRUE ~ 'None' # Excludes unmapped/non-disclosed responses
+    )
+  ) %>% 
+  filter(SES_Group != "None", !is.na(NRTtheta)) %>% 
+  select(-SES_Raw, -SES_Clean)
+
+# Define reference/focal groups: Focal = LowSES (1), Reference = HighSES (0)
+dat <- dat %>% 
+  mutate(Group_Num = ifelse(SES_Group == "LowSES", 1, 0))
+
+item_cols <- setdiff(colnames(dat), c("SES_Group", "Group_Num", "NRTtheta"))
+
+# Sanitize items strictly into binary 0 and 1
+dat <- dat %>%
+  mutate(across(all_of(item_cols), ~ {
+    val <- if (is.factor(.)) as.numeric(as.character(.)) else as.numeric(.)
+    ifelse(is.na(val) | val <= 0, 0, 1)
+  }))
+
+# Screen for active items with variance > 0
+item_variances <- sapply(dat[item_cols], function(x) var(x, na.rm = TRUE))
+valid_items <- names(item_variances[!is.na(item_variances) & item_variances > 0])
+
+cat("SES breakdown in filtered dataset:\n")
+print(table(dat$SES_Group))
+cat("Valid active items retained for SES DIF:", length(valid_items), "\n")
+cat("Sample size (N):", nrow(dat), "\n\n")
+
+# ==============================================================================
+# 2. LOGISTIC REGRESSION DIF MATCHED DIRECTLY ON NRTtheta
+# ==============================================================================
+calc_nagelkerke <- function(model_null, model_full, n) {
+  dev_null <- deviance(model_null)
+  dev_full <- deviance(model_full)
+  r2_cs    <- 1 - exp((dev_full - dev_null) / n)
+  r2_max   <- 1 - exp(-dev_null / n)
+  return(r2_cs / r2_max)
+}
+
+n_items <- length(valid_items)
+
+dif_results <- data.frame(
+  Item = valid_items,
+  LRT_Statistic = rep(NA_real_, n_items),
+  p_value = rep(NA_real_, n_items),
+  Nagelkerke_Delta_R2 = rep(NA_real_, n_items),
+  DIF_Type = rep("None", n_items),
+  ETS_Effect_Category = rep("Negligible (A)", n_items),
+  DIF_Flagged = rep("NO", n_items),
+  Convergence = rep("Converged", n_items),
+  stringsAsFactors = FALSE
+)
+
+n_sample <- nrow(dat)
+
+# Fast loop evaluating all active items matched on NRTtheta
+for (i in seq_along(valid_items)) {
+  itm <- valid_items[i]
+  
+  df_item <- data.frame(
+    y = dat[[itm]],
+    theta = dat$NRTtheta,
+    group = dat$Group_Num
+  )
+  
+  tryCatch({
+    # Fit models controlling for pre-computed NRTtheta
+    m0 <- suppressWarnings(glm(y ~ theta, data = df_item, family = binomial()))
+    m1 <- suppressWarnings(glm(y ~ theta + group, data = df_item, family = binomial()))
+    m2 <- suppressWarnings(glm(y ~ theta + group + theta:group, data = df_item, family = binomial()))
+    
+    # Likelihood Ratio Test comparing Base Model (m0) vs Full Model (m2)
+    lrt_stat <- deviance(m0) - deviance(m2)
+    lrt_df   <- df.residual(m0) - df.residual(m2)
+    p_val    <- pchisq(lrt_stat, df = lrt_df, lower.tail = FALSE)
+    
+    # Nagelkerke Delta R2 Effect Size calculation
+    r2_0 <- calc_nagelkerke(m0, m0, n_sample)
+    r2_2 <- calc_nagelkerke(m0, m2, n_sample)
+    delta_r2 <- abs(r2_2 - r2_0)
+    
+    # Uniform vs Non-Uniform test
+    lrt_unif_stat <- deviance(m0) - deviance(m1)
+    p_unif <- pchisq(lrt_unif_stat, df = 1, lower.tail = FALSE)
+    dif_type <- ifelse(p_unif < 0.05, "Uniform", "Non-Uniform")
+    
+    # Standard ETS Effect Size Categorization
+    ets_cat <- case_when(
+      delta_r2 < 0.035 ~ "Negligible (A)",
+      delta_r2 >= 0.035 & delta_r2 < 0.070 ~ "Moderate (B)",
+      delta_r2 >= 0.070 ~ "Large / Severe (C)",
+      TRUE ~ "Negligible (A)"
+    )
+    
+    flagged <- ifelse(p_val < 0.05 & delta_r2 >= 0.035, "YES", "NO")
+    
+    dif_results$LRT_Statistic[i] <- round(lrt_stat, 3)
+    dif_results$p_value[i]       <- round(p_val, 4)
+    dif_results$Nagelkerke_Delta_R2[i] <- round(delta_r2, 4)
+    dif_results$DIF_Type[i]     <- ifelse(p_val < 0.05, dif_type, "None")
+    dif_results$ETS_Effect_Category[i] <- ets_cat
+    dif_results$DIF_Flagged[i]  <- flagged
+    dif_results$Convergence[i]  <- "Converged"
+    
+  }, error = function(e) {
+    dif_results$Convergence[i] <<- "Failed"
+  })
+}
+
+flagged_logistic <- dif_results %>% filter(DIF_Flagged == "YES")
+
+# ==============================================================================
+# 3. EXPORT MULTI-TAB EXCEL WORKBOOK
+# ==============================================================================
+wb <- createWorkbook()
+
+# Sheet 1: Flagged SES DIF Items
+addWorksheet(wb, "Flagged_SES_DIF")
+writeData(wb, "Flagged_SES_DIF", flagged_logistic)
+
+# Sheet 2: Complete All-Items SES DIF Results
+addWorksheet(wb, "All_Items_SES_DIF")
+writeData(wb, "All_Items_SES_DIF", dif_results)
+
+# Header formatting
+header_style <- createStyle(
+  fontName = "Arial", fontSize = 11, fontColour = "#FFFFFF",
+  fgFill = "#1F497D", halign = "center", textDecoration = "bold"
+)
+
+addStyle(wb, "Flagged_SES_DIF", header_style, rows = 1, cols = 1:ncol(flagged_logistic), gridExpand = TRUE)
+addStyle(wb, "All_Items_SES_DIF", header_style, rows = 1, cols = 1:ncol(dif_results), gridExpand = TRUE)
+
+setColWidths(wb, "Flagged_SES_DIF", cols = 1:ncol(flagged_logistic), widths = "auto")
+setColWidths(wb, "All_Items_SES_DIF", cols = 1:ncol(dif_results), widths = "auto")
+
+excel_filename <- "SES_DIF_Analysis_NRTtheta_Results.xlsx"
+saveWorkbook(wb, excel_filename, overwrite = TRUE)
+
+cat("--- SES DIF ANALYSIS COMPLETE (MATCHED ON NRTtheta) ---\n")
+cat("Total Items Evaluated:", nrow(dif_results), "\n")
+cat("Converged Items:", sum(dif_results$Convergence == "Converged"), "\n")
+cat("Items Flagged for SES DIF (Moderate/Severe & p < 0.05):", nrow(flagged_logistic), "\n")
+cat("Excel Workbook Saved to:", excel_filename, "\n")
+```
+
+#### Merge All DIF Excel Files
+
+```{r}
+library(dplyr)
+library(purrr)
+library(readxl)
+library(openxlsx)
+
+# ==============================================================================
+# 1. DEFINE FILE MAPPING FOR ALL 8 DEMOGRAPHIC WORKBOOKS
+# ==============================================================================
+file_map <- list(
+  Age               = "DIF_Analysis_NRTtheta_Results.xlsx", # Update if named Age_DIF_Analysis_NRTtheta_Results.xlsx
+  Gender            = "Gender_DIF_Analysis_NRTtheta_Results.xlsx",
+  Disability        = "Disability_DIF_Analysis_NRTtheta_Results.xlsx",
+  ApplicantType     = "ApplicantType_DIF_Analysis_NRTtheta_Results.xlsx",
+  Ethnicity         = "Ethnicity_DIF_Analysis_NRTtheta_Results.xlsx",
+  SexualOrientation = "SexualOrientation_DIF_Analysis_NRTtheta_Results.xlsx",
+  Religion          = "Religion_DIF_Analysis_NRTtheta_Results.xlsx",
+  SES               = "SES_DIF_Analysis_NRTtheta_Results.xlsx"
+)
+
+# Standard base metric target names
+base_metrics <- c("DIF_Type", "ETS_Effect_Category", "DIF_Flagged", "Convergence")
+
+# ==============================================================================
+# 2. SAFELY READ & PREFIX METRICS FROM SHEET 2
+# ==============================================================================
+processed_list <- imap(file_map, function(file_path, group_prefix) {
+  if (!file.exists(file_path)) {
+    warning(paste("File not found:", file_path, "- skipping."))
+    return(NULL)
+  }
+  
+  # Read Sheet 2 (All Items Summary tab)
+  df <- read_excel(file_path, sheet = 2)
+  
+  if (!"Item" %in% colnames(df)) {
+    warning(paste("'Item' column missing in", file_path, "- skipping."))
+    return(NULL)
+  }
+  
+  # Strip existing group prefixes if already present in column headers
+  colnames(df) <- gsub(paste0("^", group_prefix, "_"), "", colnames(df))
+  
+  # Select available target columns
+  cols_to_keep <- intersect(c("Item", base_metrics), colnames(df))
+  df_sub <- df[, cols_to_keep, drop = FALSE]
+  
+  # Prefix all non-Item metric columns cleanly
+  metric_cols <- setdiff(colnames(df_sub), "Item")
+  
+  for (col in metric_cols) {
+    colnames(df_sub)[colnames(df_sub) == col] <- paste0(group_prefix, "_", col)
+  }
+  
+  return(df_sub)
+})
+
+# Filter out empty entries
+processed_list <- compact(processed_list)
+
+# ==============================================================================
+# 3. FULL OUTER JOIN ACROSS ALL DEMOGRAPHIC GROUPS
+# ==============================================================================
+# Retains all item names whether converged or non-converged
+master_df <- reduce(processed_list, ~ full_join(.x, .y, by = "Item")) %>% 
+  arrange(Item)
+
+cat("\n--- CONSOLATION SUCCESSFUL ---\n")
+cat("Total Unique Items Retained:", nrow(master_df), "\n")
+cat("Total Master Columns:", ncol(master_df), "\n\n")
+
+# ==============================================================================
+# 4. EXPORT TO SINGLE CONSOLIDATED EXCEL WORKSHEET
+# ==============================================================================
+wb <- createWorkbook()
+addWorksheet(wb, "Master_DIF_Summary")
+
+# Write master dataframe
+writeData(wb, "Master_DIF_Summary", master_df)
+
+# Apply header styling
+header_style <- createStyle(
+  fontName = "Arial", fontSize = 11, fontColour = "#FFFFFF",
+  fgFill = "#1F497D", halign = "center", textDecoration = "bold"
+)
+
+addStyle(wb, "Master_DIF_Summary", header_style, rows = 1, cols = 1:ncol(master_df), gridExpand = TRUE)
+setColWidths(wb, "Master_DIF_Summary", cols = 1:ncol(master_df), widths = "auto")
+
+# Save file
+output_filename <- "Master_Consolidated_DIF_Results.xlsx"
+saveWorkbook(wb, output_filename, overwrite = TRUE)
+
+cat("Master Excel file saved successfully as:", output_filename, "\n")
+```
