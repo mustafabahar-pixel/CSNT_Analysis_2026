@@ -7,7 +7,10 @@
 .httr-oauth
 .DS_Store
 .quarto
+<<<<<<< HEAD
 #general file types to be ignored (requires asterisks)
+=======
+>>>>>>> 5cc31797666256cc67c42a68ae0abda49b70c50d
 #below command prevents any csv filed to be pushed to git
 *.csv
 #below command prevents any excel filed to be pushed to git
