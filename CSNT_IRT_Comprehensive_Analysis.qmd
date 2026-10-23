@@ -6,6 +6,8 @@ format:
     toc: true
     df-print: paged # Clean interactive paged tables
 ---
+
+```{=html}
 <style>
   /* Force tables to render with clean white background and black text */
   table, .table, .pagedtable {
@@ -27,7 +29,9 @@ format:
     border: 1px solid #444444 !important;
   }
 </style>
----
+```
+
+------------------------------------------------------------------------
 
 ### 
 
@@ -49,25 +53,6 @@ library(stringr)
 library(WrightMap)
 library(latticeExtra)
 library(summarytools)
-```
-
-```{r}
-<style>
-  /* Force dark console output boxes to have bright text */
-  pre, code {
-    background-color: #1e1e1e !important;
-    color: #f8f8f2 !important;
-  }
-  /* Force tables to render with light background and black text */
-  table {
-    background-color: #ffffff !important;
-    color: #000000 !important;
-  }
-  th {
-    background-color: #333333 !important;
-    color: #ffffff !important;
-  }
-</style>
 ```
 
 # 1. Data Preparation
@@ -156,7 +141,7 @@ which(all_na_persons)
 
 ```{r}
 # 1. READ METADATA & GET ACTIVE ITEM NAMES 
-item_metadata <- read_excel("~/Documents/R Studio Work/CSNT_Item_Usage_2026_All.xlsx")
+item_metadata <- read_excel("~/Desktop/Datasets/2026_10_22_CSNT_Item_Usage_2026_All.xlsx")
 
 active_items_list <- item_metadata %>%
   filter(Type == "Active") %>%
