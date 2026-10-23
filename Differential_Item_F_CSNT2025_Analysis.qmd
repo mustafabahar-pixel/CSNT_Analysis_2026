@@ -68,14 +68,14 @@ library(summarytools)
 Change the file path to your dataset address. Next, Data without 'timecompleted' are dropped
 
 ```{r}
-CSNT_Complete_Item_Diversity_Scored <- read_excel("~/Documents/R Studio Work/Csnt Analysis All_Data/CSNT_Complete_Item_Diversity_Scored.xlsx")
+CSNT_Complete_Item_Diversity_Scored <- read_excel("~/Desktop/Datasets/2026_10_22_CSNT_Complete_Item_Diversity_Scored.xlsx")
 CSNT_Complete_Item_Diversity_Scored <- CSNT_Complete_Item_Diversity_Scored %>%
 drop_na(timecompleted)
 
 write_xlsx(CSNT_Complete_Item_Diversity_Scored, "CSNT_Complete_Item_Diversity_ScoredClean.xlsx")
 CSNT_Complete_Item_Diversity_ScoredClean <- CSNT_Complete_Item_Diversity_Scored[, !colAlls(is.na(CSNT_Complete_Item_Diversity_Scored))]
 
-CSNT_All_Grade_Type <- read.csv("~/Documents/R Studio Work/CSNT Item Diversity All Data/CSNT_All_Grade_Type.csv")
+CSNT_All_Grade_Type <- read.csv("~/Desktop/Datasets/2026_10_22_CSNT_All_Grade_Type.csv")
 View(CSNT_All_Grade_Type)
 ```
 
