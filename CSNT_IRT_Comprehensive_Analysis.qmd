@@ -52,7 +52,7 @@ library(knitr)
 library(stringr)
 library(WrightMap)
 library(latticeExtra)
-library(summarytools)
+#library(summarytools)
 ```
 
 # 1. Data Preparation
@@ -85,13 +85,21 @@ df2_clean <- CSNT_Complete_Item_Diversity_ScoredClean %>%
   mutate(join_key = trimws(sprintf("%.0f", as.numeric(fielddata))))
 
 # 2. Join datasets on join_key
-CSNT_Complete_Item_Diversity_ScoredClean <- left_join(df1_clean, df2_clean, by = "join_key")
+CSNT_Complete_Item_Diversity_ScoredClean_MB <- left_join(df1_clean, df2_clean, by = "join_key")
 
 # 3. Check matches using a column that strictly comes from df2
 col_from_df2 <- "fielddata" 
 
 match_count <- sum(!is.na(CSNT_Complete_Item_Diversity_ScoredClean[[col_from_df2]]))
 cat("Number of matching rows:", match_count, "out of", nrow(df1_clean), "\n")
+```
+
+### 2026-1027 GI QC 1a.
+
+```{r}
+# 2. Join datasets on join_key
+CSNT_Complete_Item_Diversity_ScoredClean <- left_join(CSNT_All_Grade_Type, CSNT_Complete_Item_Diversity_ScoredClean, by = "fielddata")
+
 ```
 
 ## 1.b. Creating annual dataset -2025
@@ -107,7 +115,7 @@ CSNT_Complete_Item_Diversity_ScoredClean_2025<-filter(temp, timecompleted==2025)
 ```{r}
 CSNT_Complete_Item_Diversity_ScoredClean_2025 <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
 arrange(timecompleted) %>%      # Sort dates in ascending order (earliest first)
-distinct(fielddata.x, .keep_all = TRUE) # Keep first occurrence per ID, retain all other columns
+distinct(fielddata, .keep_all = TRUE) # Keep first occurrence per ID, retain all other columns
 sum(duplicated(CSNT_Complete_Item_Diversity_ScoredClean_2025$fielddata))
 ```
 
@@ -321,6 +329,21 @@ item_cols <- unmatched_6 %>% select(starts_with("item_")) # or select(item1:item
 row_variances <- apply(item_cols, 1, var, na.rm = TRUE)
 print(row_variances)
 
+```
+
+### 2026-10-27 GI QC 1b.
+
+```{r}
+# 1. Inspect the 6 unmatched rows
+unmatched_6 <- CSNT_Complete_Item_Diversity_ScoredClean %>%
+  filter(is.na(fielddata))
+
+# 2. Select item response columns (adjust column range/names to match your item columns)
+item_cols <- unmatched_6 %>% select(starts_with("item_")) # or select(item1:item30)
+
+# 3. Calculate row variance (zero variance indicates straight-line responding)
+row_variances <- apply(item_cols, 1, var, na.rm = TRUE)
+print(row_variances)
 ```
 
 ### 2.c. Export Report to Excel
@@ -1155,7 +1178,7 @@ cat("==================================================================\n")
 ### Evaluating the Results
 
 |  |  |  |
-|------------------------|------------------------|------------------------|
+|----|----|----|
 | **Statistic** | **Good Fit Threshold** | **What it Tells You** |
 | **RMSEA** | $< 0.06$ (acceptable $< 0.08$) | Root Mean Square Error of Approximation; indicates closeness to unidimensional fit. |
 | **CFI / TLI** | $> 0.95$ (acceptable $> 0.90$) | Comparative Fit Index / Tucker-Lewis Index; values above $0.95$ strongly support a single dimension. |
@@ -1439,7 +1462,9 @@ colnames(summary_1pl_active)
     }
     ```
 
-7.  
+<!-- -->
+
+6.  
 
     6.  determine diversity groups
 
@@ -1618,9 +1643,154 @@ colnames(summary_1pl_active)
     cat("\n==================================================================\n")
     cat("SUCCESS! Updated analysis using job_grade.x exported to:\n", excel_comp_out, "\n")
     cat("==================================================================\n")
+
     ```
 
-8.  
+    ### 2026-10-27 GI QC 1c
+
+    ```{r}
+
+    # ==============================================================================
+    # 2. FILTER DATASET (USING job_grade.x AND gender.y) & CALCULATE PERCENTILES
+    # ==============================================================================
+    df_gender_clean <- as.data.frame(CSNT_Complete_Item_Diversity_ScoredClean_2025) %>%
+      mutate(
+        # Using job_grade.x as requested
+        job_grade_raw = str_trim(clean_vector_col(job_grade)),
+        gender_y_raw  = str_trim(clean_vector_col(gender)),
+        
+        job_grade_clean = case_when(
+          str_detect(job_grade_raw, "(?i)Administrative Officer") ~ "Administrative Officer",
+          str_detect(job_grade_raw, "(?i)Executive Officer")     ~ "Executive Officer",
+          str_detect(job_grade_raw, "(?i)Higher Executive")       ~ "Higher Executive Office",
+          str_detect(job_grade_raw, "(?i)Senior Executive")       ~ "Senior Executive Office",
+          str_detect(job_grade_raw, "(?i)Grade ?7")               ~ "Grade7",
+          str_detect(job_grade_raw, "(?i)Grade ?6")               ~ "Grade 6",
+          TRUE ~ NA_character_
+        ),
+        
+        gender_y_clean = case_when(
+          str_detect(gender_y_raw, "(?i)^man$")   ~ "Man",
+          str_detect(gender_y_raw, "(?i)^woman$") ~ "Woman",
+          TRUE ~ NA_character_
+        )
+      ) %>%
+      filter(!is.na(job_grade_clean), !is.na(gender_y_clean)) %>%
+      mutate(
+        job_grade_clean = factor(job_grade_clean, levels = target_grades, ordered = TRUE),
+        gender_y_clean  = factor(gender_y_clean, levels = c("Man", "Woman")),
+        
+        Percentile_1PL = ceiling(percent_rank(Theta_1PL) * 100),
+        Percentile_NRT = ceiling(percent_rank(.data[[nrt_col]]) * 100)
+      ) %>%
+      mutate(
+        Percentile_1PL = ifelse(Percentile_1PL == 0, 1, Percentile_1PL),
+        Percentile_NRT = ifelse(Percentile_NRT == 0, 1, Percentile_NRT)
+      )
+
+    cat("Filtered Norm & Gender Sample N =", nrow(df_gender_clean), "\n\n")
+
+    # ==============================================================================
+    # 3. BUILD SIDE-BY-SIDE TABLE: THETA COMPARISONS & THETA-BASED ADVERSE IMPACT
+    # ==============================================================================
+    build_gender_theta_ai_grid <- function(data, theta_col, pct_col) {
+      
+      grid_results <- data.frame(Percentile = 1:100)
+      
+      for (grade in target_grades) {
+        grade_data  <- data %>% filter(job_grade_clean == grade)
+        total_men   <- sum(grade_data$gender_y_clean == "Man")
+        total_women <- sum(grade_data$gender_y_clean == "Woman")
+        
+        pct_stats <- list()
+        
+        for (p in 1:100) {
+          # Candidates in exact percentile p
+          exact_p_data <- grade_data %>% filter(.data[[pct_col]] == p)
+          
+          men_data   <- exact_p_data %>% filter(gender_y_clean == "Man")
+          women_data <- exact_p_data %>% filter(gender_y_clean == "Woman")
+          
+          m_count <- nrow(men_data)
+          w_count <- nrow(women_data)
+          
+          # SEPARATE AVERAGE THETA SCORES FOR THIS PERCENTILE
+          m_avg_th <- ifelse(m_count > 0, round(mean(men_data[[theta_col]], na.rm = TRUE), 4), NA_real_)
+          w_avg_th <- ifelse(w_count > 0, round(mean(women_data[[theta_col]], na.rm = TRUE), 4), NA_real_)
+          
+          # THETA SCORE DIFFERENCE AT THIS PERCENTILE (Woman minus Man)
+          th_diff  <- ifelse(!is.na(m_avg_th) & !is.na(w_avg_th), round(w_avg_th - m_avg_th, 4), NA_real_)
+          
+          # CUMULATIVE THETA SELECTION RATE ADVERSE IMPACT
+          # (Candidates meeting or exceeding the minimum Theta threshold of percentile p)
+          cum_p_data <- grade_data %>% filter(.data[[pct_col]] >= p)
+          m_cum_pass <- sum(cum_p_data$gender_y_clean == "Man")
+          w_cum_pass <- sum(cum_p_data$gender_y_clean == "Woman")
+          
+          m_rate <- ifelse(total_men > 0, m_cum_pass / total_men, 0)
+          w_rate <- ifelse(total_women > 0, w_cum_pass / total_women, 0)
+          
+          # Adverse Impact Ratio (Woman Selection Rate / Man Selection Rate)
+          air <- ifelse(m_rate > 0, w_rate / m_rate, NA_real_)
+          ai_flag <- ifelse(is.na(air), "N/A", ifelse(air < 0.80, "YES (AIR < 0.80)", "NO (AIR >= 0.80)"))
+          
+          pct_stats[[p]] <- data.frame(
+            Man_Count            = m_count,
+            Woman_Count          = w_count,
+            Man_Avg_Theta        = m_avg_th,
+            Woman_Avg_Theta      = w_avg_th,
+            Theta_Diff_W_minus_M = th_diff,
+            Impact_Ratio_AIR     = ifelse(is.nan(air), NA_real_, round(air, 3)),
+            Adverse_Impact_Flag  = ai_flag,
+            stringsAsFactors     = FALSE
+          )
+        }
+        
+        grade_df <- bind_rows(pct_stats)
+        
+        # Label columns side-by-side with Job Grade prefix
+        prefix <- gsub(" ", "_", grade)
+        colnames(grade_df) <- paste0(
+          prefix, "_", 
+          c("Man_Count", "Woman_Count", "Man_Avg_Theta", "Woman_Avg_Theta", "Theta_Diff_W_minus_M", "Impact_Ratio_AIR", "Adverse_Impact_Flag")
+        )
+        
+        grid_results <- cbind(grid_results, grade_df)
+      }
+      
+      return(grid_results)
+    }
+
+    # ==============================================================================
+    # 4. GENERATE AND EXPORT TO EXCEL
+    # ==============================================================================
+    cat("Building Side-by-Side Grid for 1PL Theta (using job_grade.x)...\n")
+    grid_1pl_comp <- build_gender_theta_ai_grid(df_gender_clean, "Theta_1PL", "Percentile_1PL")
+
+    cat("Building Side-by-Side Grid for NRT Theta (using job_grade.x)...\n")
+    grid_nrt_comp <- build_gender_theta_ai_grid(df_gender_clean, nrt_col, "Percentile_NRT")
+
+    wb_comp <- createWorkbook()
+
+    # Sheet 1: 1PL Model Analysis
+    addWorksheet(wb_comp, "1PL_Theta_Gender_AI")
+    writeDataTable(wb_comp, "1PL_Theta_Gender_AI", grid_1pl_comp, tableStyle = "TableStyleMedium9")
+    setColWidths(wb_comp, "1PL_Theta_Gender_AI", cols = 1:ncol(grid_1pl_comp), widths = "auto")
+
+    # Sheet 2: NRT Model Analysis
+    addWorksheet(wb_comp, "NRT_Theta_Gender_AI")
+    writeDataTable(wb_comp, "NRT_Theta_Gender_AI", grid_nrt_comp, tableStyle = "TableStyleMedium2")
+    setColWidths(wb_comp, "NRT_Theta_Gender_AI", cols = 1:ncol(grid_nrt_comp), widths = "auto")
+
+    excel_comp_out <- "CSNT_JobGradeX_Gender_Theta_Adverse_Impact_By_Percentile.xlsx"
+    saveWorkbook(wb_comp, file = excel_comp_out, overwrite = TRUE)
+
+    cat("\n==================================================================\n")
+    cat("SUCCESS! Updated analysis using job_grade.x exported to:\n", excel_comp_out, "\n")
+    cat("==================================================================\n")
+    ```
+
+7.  
 
     6.  group diversity
     7.  establish norms, extract from GRID, fielddata etc.
@@ -1683,4 +1853,63 @@ colnames(summary_1pl_active)
     write.table(pass_rate_summary, sep = "\t", row.names = FALSE, quote = FALSE)
     ```
 
-    6.  test with both new and old theta scores
+2026-10-27 GI QC 1d.
+
+```{r}
+clean_vector_col <- function(x) {
+  if (is.null(x)) return(NULL)
+  if (is.list(x)) {
+    sapply(x, function(val) {
+      if (is.null(val) || length(val) == 0 || all(is.na(val))) {
+        return(NA_character_)
+      } else {
+        return(as.character(val[[1]]))
+      }
+    })
+  } else {
+    return(as.character(x))
+  }
+}
+
+df_raw <- as.data.frame(CSNT_Complete_Item_Diversity_ScoredClean_2025)
+
+# Detect grade column
+col_gx <- intersect(c("job_grade", "job_grade.x", "job_grade_x", "job_grades"), colnames(df_raw))[1]
+
+# Extract clean character vector directly
+df_pass_rates <- df_raw %>%
+  mutate(
+    job_grade_clean = clean_vector_col(.data[[col_gx]]),
+    status = ifelse(NRTPercentileScore >= 29, "Pass", "Fail")
+  )
+
+# Define exact targets as they exist in your dataset
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+# Summarize directly on exact string matches
+pass_rate_summary <- df_pass_rates %>%
+  filter(job_grade_clean %in% target_grades, !is.na(status)) %>%
+  group_by(Job_Grade = job_grade_clean) %>%
+  summarise(
+    Total_Candidates = n(),
+    Pass_Count       = sum(status == "Pass"),
+    Fail_Count       = sum(status == "Fail"),
+    Pass_Rate_Pct    = round((sum(status == "Pass") / n()) * 100, 2),
+    Fail_Rate_Pct    = round((sum(status == "Fail") / n()) * 100, 2),
+    .groups          = "drop"
+  )
+
+# Print as clean tab-delimited text
+write.table(pass_rate_summary, sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+```         
+6.  test with both new and old theta scores
+```

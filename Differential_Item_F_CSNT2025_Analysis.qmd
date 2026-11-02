@@ -58,7 +58,7 @@ library(knitr)
 library(stringr)
 library(WrightMap)
 library(latticeExtra)
-library(summarytools)
+#library(summarytools)
 ```
 
 # 1. Data Preparation
@@ -144,6 +144,13 @@ CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
   filter(is.na(fielddata.x)) %>%
   select(fielddata.x, timecompleted)
 ```
+2026-10-28 GI QC 2b
+
+```{r}
+CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+  filter(is.na(fielddata.y)) %>%
+  select(fielddata.y, timecompleted)
+```
 
 ### 1.b.2 Documenting all items with complete missing values
 
@@ -213,6 +220,46 @@ mirt_active_matrix <- clean_active_items2025[valid_rows_active, ]
 
 cat("Participants analyzed in mirt():", nrow(mirt_active_matrix), "\n")
 
+```
+2026-10-28 GI QC 2a.
+```{r}
+# 1. READ METADATA & GET ACTIVE ITEM NAMES
+item_metadata <- read_excel("~/Desktop/Datasets/2026_10_22_CSNT_Item_Usage_2026_All.xlsx")
+
+active_items_list <- item_metadata %>%
+  filter(Type == "Active") %>%
+  pull(ItemID)
+
+# 2. SUBSET MASTER DATA & ENFORCE VARIANCE FILTERING
+# ----------------------------------------------------------------------
+id_var <- "fielddata"
+
+# Extract active item columns from 2025 master dataset
+active_matrix_raw <- CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
+  dplyr::select(any_of(active_items_list))
+
+# Calculate p-values (item means) to find zero-variance items
+item_p_values <- colMeans(active_matrix_raw, na.rm = TRUE)
+
+# Filter criteria: Non-NaN AND 0 < p-value < 1 (removes zero-variance items)
+valid_variance_cols <- !is.nan(item_p_values) & item_p_values > 0 & item_p_values < 1
+
+# Subset item matrix to active + non-zero variance items only
+clean_active_items2025 <- active_matrix_raw[, valid_variance_cols]
+
+cat("Active items requested:", length(active_items_list), "\n")
+cat("Active items retained (non-zero variance):", ncol(clean_active_items2025), "\n")
+cat("Zero-variance active items dropped:", sum(!valid_variance_cols), "\n")
+
+# 3. FILTER OUT PARTICIPANTS WITH NO RESPONSES ON ACTIVE ITEMS
+# ----------------------------------------------------------------------
+# Logical mask for participants with AT LEAST ONE response across active items
+valid_rows_active <- rowSums(!is.na(clean_active_items2025)) > 0
+
+# Extract pure matrix passed to mirt() (no IDs, no demographic cols)
+mirt_active_matrix <- clean_active_items2025[valid_rows_active, ]
+
+cat("Participants analyzed in mirt():", nrow(mirt_active_matrix), "\n")
 ```
 
 Send updated merged file to excel for reference
