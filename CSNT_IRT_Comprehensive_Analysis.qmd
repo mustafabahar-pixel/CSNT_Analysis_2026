@@ -1178,7 +1178,7 @@ cat("==================================================================\n")
 ### Evaluating the Results
 
 |  |  |  |
-|----|----|----|
+|------------------------|------------------------|------------------------|
 | **Statistic** | **Good Fit Threshold** | **What it Tells You** |
 | **RMSEA** | $< 0.06$ (acceptable $< 0.08$) | Root Mean Square Error of Approximation; indicates closeness to unidimensional fit. |
 | **CFI / TLI** | $> 0.95$ (acceptable $> 0.90$) | Comparative Fit Index / Tucker-Lewis Index; values above $0.95$ strongly support a single dimension. |

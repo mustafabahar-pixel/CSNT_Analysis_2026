@@ -30,7 +30,7 @@ Resolution for the fielddata.x is added as:\
 There are multiple 3b sections. Avoid using the same section numbering for clarity.
 
 3b. Person Theta Scores 2025.\
-The first code snippet here references "person_scores_1pl" which has not been created as an object beforehand therefore it cannot find it. I have instead moved on to run the subsequent code chunk before rerunning this. The ordering should be redone.
+The first code snippet here (row 468) references "person_scores_1pl" which has not been created as an object beforehand therefore it cannot find it. I have instead moved on to run the subsequent code chunk before rerunning this. The ordering should be redone.
 
 2026-10-27 GI QC 1c. changed gender.y to gender and job_grade.x to job_grade
 
@@ -93,3 +93,62 @@ line 305 - why so many different column names are searched for and how did you d
 lines 319-326: reason is missing for the shorter sheet names (i.e. excel cannot exceed 31 characters)
 
 Sections need to be labelled clearly (e.g. 2. adverse impact \> followed by frequencies with no clear sub section numbering, then by diversity variables). This could easily be 2a. 2b. etc.
+
+IRT
+
+lines 80-85: are these necessary to make sure the field data is numeric?
+
+comment for 1b.3 why are there 358 rows with completely empty cells?
+
+line 191: once active items with no variance are excluded from rasch modelling, what will happen to those items? will parameters or norms be inclusive of these items once updated? if nor, how will they function as part of the live test?
+
+2.Rasch- it states active items only. Is it active items only or active items with variance only? needs clarification to avoid misunderstandings and assumptions
+
+line 265 not needed
+
+266-infit outfit. not all items have outfits estimated?
+
+wright map-theta distribution to discuss
+
+line 298, would be easier to follow if the specific dataset or dataframe is referenced
+
+I wonder if there is a more concise way for section 2b Person theta scores 2025
+
+line 338 unmatched_6 is a dataframe with zero observations so I'm not confident this is successfully identifying the unmatched 6 rows from the section 2b. person theta scores 2025
+
+line 354: what do you mean by "active Rasch scores"?
+
+line 396 "Active_Rasch_IRT_Results_2025.xlsx" seems to be the same file as the previously written "Rasch_Active_Items_Analysis_Results.xlsx" row 260. I can't see the need to create duplication unless there is a justification for this.
+
+row 417 status check is not really necessary? if there is an issue with model convergence this should come up as an error in the console
+
+2b Person theta scores 2025 and 3b person theta scores 2025. Two sections should not have the same name/label. I cannot see the difference in the analysis
+
+Similarly to above, what is the difference between section 3b export report to excel (row 505) and 1PL difficulty parameters (row 525)? The output produced seems to contain exactly the same parameters so I cannot see the need for duplicate efforts unless there is a justification I missed and this should have been provided as justification as part of the textual context for each section
+
+2PL\
+rows 604 and 620 not needed
+
+discus: the plots shows that the high performers are not really being selected, the theta curve peaks at around -2
+
+row 698 not sure if this verification is needed if so needs some context
+
+4b person theta scores 2025 (row 702): another section named exactly the same for the third time?
+
+Is row 702 onwards only to check correlations between 2PL theta and raw sum scores? If so, could this be achieved with a shorter code?
+
+Discuss - what is meant by the sum scores?
+
+row 792 not needed
+
+~~IGNORE – row 795 PHASE TWO- here you aimed to compare the three models (rasch, 1PL and 2PL) by trying to fit them to 1 factor struture. is there a way to make this chuck of code shorter? For example do you need to refit the models if they were already fit previously when obtaining parameters? could those objects/dataframes be used for model comparison?~~
+
+are rows 917 and 918 both needed?
+
+row 961, step 6: so 2PL model is chosen?
+
+row 1191 - 1194: are not really required
+
+row 1204 section Compare Item Discrimination & Difficulty Parameters: confusing, I'm not following what exactly the columns refer to in the item_comparison dataframe produced?
+
+row 1361 section 6 Adverse Impact-is this a duplicate of the DIF analysis quarto document?
