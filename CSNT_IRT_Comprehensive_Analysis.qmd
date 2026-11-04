@@ -1853,62 +1853,7 @@ colnames(summary_1pl_active)
     write.table(pass_rate_summary, sep = "\t", row.names = FALSE, quote = FALSE)
     ```
 
-2026-10-27 GI QC 1d.
 
-```{r}
-clean_vector_col <- function(x) {
-  if (is.null(x)) return(NULL)
-  if (is.list(x)) {
-    sapply(x, function(val) {
-      if (is.null(val) || length(val) == 0 || all(is.na(val))) {
-        return(NA_character_)
-      } else {
-        return(as.character(val[[1]]))
-      }
-    })
-  } else {
-    return(as.character(x))
-  }
-}
-
-df_raw <- as.data.frame(CSNT_Complete_Item_Diversity_ScoredClean_2025)
-
-# Detect grade column
-col_gx <- intersect(c("job_grade", "job_grade.x", "job_grade_x", "job_grades"), colnames(df_raw))[1]
-
-# Extract clean character vector directly
-df_pass_rates <- df_raw %>%
-  mutate(
-    job_grade_clean = clean_vector_col(.data[[col_gx]]),
-    status = ifelse(NRTPercentileScore >= 29, "Pass", "Fail")
-  )
-
-# Define exact targets as they exist in your dataset
-target_grades <- c(
-  "Administrative Officer",
-  "Executive Officer",
-  "Higher Executive Officer",
-  "Senior Executive Officer",
-  "Grade 7",
-  "Grade 6"
-)
-
-# Summarize directly on exact string matches
-pass_rate_summary <- df_pass_rates %>%
-  filter(job_grade_clean %in% target_grades, !is.na(status)) %>%
-  group_by(Job_Grade = job_grade_clean) %>%
-  summarise(
-    Total_Candidates = n(),
-    Pass_Count       = sum(status == "Pass"),
-    Fail_Count       = sum(status == "Fail"),
-    Pass_Rate_Pct    = round((sum(status == "Pass") / n()) * 100, 2),
-    Fail_Rate_Pct    = round((sum(status == "Fail") / n()) * 100, 2),
-    .groups          = "drop"
-  )
-
-# Print as clean tab-delimited text
-write.table(pass_rate_summary, sep = "\t", row.names = FALSE, quote = FALSE)
-```
 
 ```         
 6.  test with both new and old theta scores

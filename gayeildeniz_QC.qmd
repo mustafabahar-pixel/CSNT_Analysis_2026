@@ -4,71 +4,47 @@ format: html
 editor: visual
 ---
 
-## QC comments
+# 2026-11-04 Quality Control Feedback by Gaye Ildeniz
 
-2026-10-27
+Feedback stems from two different type of testing: 1) testing the script runs without errors, 2) checking the details of the analysis is relevant and accurate.
 
-row 55: summary tools missing xquartz\
-We ran the below but didn't solve issue, we ignored and proceeded:\
+## 1. Script Testing
+
+### 1a. "CSNT_IRT_Comprehensive_Analysis.qmd"
+
+- row 55: summary tools library missing xquartz
+
+We ran the below but didn't solve issue, we ignored by adding a \# at the start and proceeded:\
 Sys.setenv(NOAWT = "true") options(summarytools.tk = FALSE)
 
-row 288: "fielddata" variable is saved as fielddata.x in the CSNT_Complete_Item_Diversity_StoredClean_2025
+ACTION: Please check if this library is needed for any of the functions in the script otherwise can be deleted.
+
+- row 288: "fielddata" variable is saved as fielddata.x in the "CSNT_Complete_Item_Diversity_StoredClean_2025"
 
 diagnosis: row 88 generates .x and .y datafields for fielddata.x and batteryinstance.y
 
-Resolution for the fielddata.x is added as:\
+Solution for the fielddata.x is added as:\
 2026-1027 GI QC 1a.
 
--the rationale of different datasets loaded in needs to be added as comments
+- row 113: 1b.1 also had fielddata.x which is now removed
 
-1b.1 also had fielddata.x which is now removed
+- row 318: 2b. Person Theta scores 2025 section, under "Re-Check for item variance (6 rows nonmatching due to NAs)" Solution: added 2026-10-27 GI QC 1b. to replicate the code above relying on fielddata.y
 
-### "2.b. Person Theta scores 2025" under "Re-Check for item variance (6rows nonmatching due to NAs)"
+- row 468: 3b. Person Theta Scores 2025. The first code snippet here references "person_scores_1pl" which has not been created as an object beforehand therefore it cannot find it.
 
-### added 2026-10-27 GI QC 1b. to replicate the code above relying on fielddata.y
+Solution: I have instead moved on to run the subsequent code chunk before rerunning this.
 
-There are multiple 3b sections. Avoid using the same section numbering for clarity.
+ACTION: The ordering of the code snippets should be reorganised/swapped.
 
-3b. Person Theta Scores 2025.\
-The first code snippet here (row 468) references "person_scores_1pl" which has not been created as an object beforehand therefore it cannot find it. I have instead moved on to run the subsequent code chunk before rerunning this. The ordering should be redone.
+### 1b. "Differential_Item_F_CSNT2025_Analysis.qmd"
 
-2026-10-27 GI QC 1c. changed gender.y to gender and job_grade.x to job_grade
+- row 181: Section 1.b.5 Select ONLY active items to evaluate test performance: File path is incorrect
 
-Section 7 needs to be clarified in numbering
-
-Section 7 (Existing Percentile overall pass rates per Grade)
-
-added a new code chunk due to the below code returning an error:
-
-```         
-# Extract clean character vector directly
-df_pass_rates <- df_raw %>%
-  mutate(
-    job_grade_clean = clean_vector_col(.data[[col_gx]]),
-    status = ifelse(NRTPercentileScore >= 29, "Pass", "Fail")
-  )
-```
-
-Error was:
-
-Error in \`mutate()\`:ℹ In argument: \`job_grade_clean = clean_vector_col(.data\[\[NA_character\_\]\])\`.Caused by error in \`.data\[\[NA_character\_\]\]\`:! Must subset the data pronoun with a string, not a character \`NA\`.
-
-Diagnosed the issue stemming from the code above this:
-
-```         
-# Detect grade column
-col_gx <- intersect(c("job_grade.x", "job_grade_x", "job_grades"), colnames(df_raw))[1]
-```
-
-whereas the df_raw only contained the datafield "job_grade" which was not one of the options in the code above.
-
-In the new code chunk added I also specified "job_grade" as one of the options, the rest of the code is the same
-
-Section 6 at the end seems to be incomplete?
+Solution: File path is changed under 2026-10-28 GI QC 2a.
 
 DIF----
 
-row 179: file path is incorrect so I changed it under 2026-10-28 GI QC 2a.
+## 1. Script Testing
 
 \*\*there is a need to submit results along with scripts for QC not just the script and relying on faith that it will work exactly the same for different people. We need a single source to verify what I'm getting. Author render and export as pdf for original results and findings.
 
@@ -152,3 +128,31 @@ row 1191 - 1194: are not really required
 row 1204 section Compare Item Discrimination & Difficulty Parameters: confusing, I'm not following what exactly the columns refer to in the item_comparison dataframe produced?
 
 row 1361 section 6 Adverse Impact-is this a duplicate of the DIF analysis quarto document?
+
+2026-11-04 meeting:
+
+section 6 and 7 (AIR) and selection rates will not be in the IRT quarto so can ignore, they already exist in the DIF quarto
+
+1PL is preferred
+
+check if the full item correlations are explored and if there are any negative correlations indicating lack of unidimensionality. was it recording first 10 or if there is an excel written on this.
+
+also check all 3 models being fit to one factor structure.
+
+EFA to be considered
+
+residual correlations-to be included
+
+Rasch has embedded unidimensionality test and this needs to be included as well
+
+Gaye to check CSSA missing data design at the EFA trial
+
+Lazaros: multidimensional Rasch models?
+
+IRT-
+
+-the rationale of different datasets loaded in needs to be added as comments
+
+There are multiple 3b sections. Avoid using the same section numbering for clarity.
+
+Section 6 at the end seems to be incomplete?
