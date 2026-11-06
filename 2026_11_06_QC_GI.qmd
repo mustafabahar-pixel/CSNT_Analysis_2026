@@ -1,10 +1,10 @@
 ---
-title: "gayeildeniz_QC"
+title: "2026_11_06_QC_GI"
 format: html
 editor: visual
 ---
 
-# 2026-11-04 Quality Control Feedback by Gaye Ildeniz
+# 2026-11-06 Quality Control Feedback by Gaye Ildeniz
 
 Feedback stems from two different type of testing: 1) testing the script runs without errors, 2) checking the details of the analysis is relevant and accurate. The latter will also include any feedback on structure and formatting of the script.
 
@@ -173,8 +173,6 @@ Solution: 2026-10-28 GI QC 2b added to check NA rows for fielddata.y rather than
 - rows 279-281: This is an example only. These check for existence of a file is unnecessary and in my view clutters the script. Any code will not work and will encounter an error if the files are missing anyway.
 
 ACTION: Consider removing any function that checks for existence of files at the start of any code chunk
-
-Section 1b.5: item p values are calculated. Does this mean a CTT approach is adopted in this section? If so why?
 
 - row 305-306: Is it necessary so many different column names are searched for and how did you determine the priority order for which one to choose i.e. \[1\] at the end? Could listing a wide range of column names be avoided by making sure the relevant and accurate naming is produced in the data frames?
 
