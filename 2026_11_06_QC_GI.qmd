@@ -63,7 +63,7 @@ ACTION: Each section and subsection should be clearly labelled and concisely nam
 
 - row 68: no longer applicable
 
-- lines 80-85: are these necessary to make sure the field data is numeric?
+- rows 80-85: are these necessary to make sure the field data is numeric?
 
 - row 135: Section 1b.3: The result indicates that there are 358 rows with completely empty cells that will be dropped. I assumed the starting data set would only include test completions, where a test is submitted. How come there are rows representing test takers with no responses to any of the test items?
 
@@ -185,3 +185,11 @@ ACTION: Ensure all reasoning, rationale is provided as part of contextual texts 
 - row 272 onward: Sections need to be labelled clearly (e.g. 2. adverse impact \> followed by frequencies with no clear sub section numbering, then by diversity variables). This could easily be 2a. 2b. etc.
 
 ACTION: Ensure all sections are sequenced, numbered and labelled appropriately and in a relevant way so that the outline is useful and another analyst can reference and track where they are.
+
+## Outstanding questions for discussion
+
+- row 706: the use of sum scores: the rationale, method and interpretation of findings
+
+- row 287: wright map theta distribution with multiple peaks rather than a smooth negatively skewed distribution
+
+**End**
