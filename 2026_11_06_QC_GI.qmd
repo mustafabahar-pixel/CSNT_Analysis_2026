@@ -186,7 +186,11 @@ ACTION: Ensure all reasoning, rationale is provided as part of contextual texts 
 
 ACTION: Ensure all sections are sequenced, numbered and labelled appropriately and in a relevant way so that the outline is useful and another analyst can reference and track where they are.
 
+<<<<<<< HEAD
 ## 3. Outstanding questions for discussion
+=======
+## Outstanding questions for discussion
+>>>>>>> 79846b2d7df525e97a1d0839bd48b8040baa3bac
 
 - row 706: the use of sum scores: the rationale, method and interpretation of findings
 

@@ -1,0 +1,2953 @@
+---
+title: "CSNT_Report_2026"
+format: html
+editor: visual
+---
+
+# CSNT Review Report
+
+[This CSNT report conttains items from the **CSNT_IRT_Comprehensive_Analysis** quarto document.]{.underline}
+
+## Libraries
+
+```{r}
+#| message: false
+#| warning: false
+
+library(matrixStats)
+library(DT)
+library(mirt)
+library(openxlsx)
+library(dplyr)
+library(knitr)
+library(stringr)
+library(WrightMap)
+library(latticeExtra)
+library(patchwork)
+library(summarytools)
+library(ggplot2)
+library(purrr)
+library(readxl)
+library(tidyverse)
+library(tidytext)
+library(writexl)
+library(scales)
+library(tibble)
+```
+
+Main dataset is based on the data collected over the last two years. Test data were then examined on a yearly basis. Because the focus of the analysis is 2025, dataset for 2025 based on 'timecompleted' is used.
+
+##### Data Description
+
+There were a total of 137182 test completions in the year 2025.
+
+For the purpose of Item Response Theory analysis, the following test takers were considered:
+
+·      Those with a theta score
+
+·      Those who have completed the tests – for IRT
+
+·      Those with variance in their responses.
+
+Complete NAs and test completions with no variance were excluded from the analysis.
+
+Data selection was based on 'timecompleted' . Of those candidates with multiple test instances, only the first test sitting was included in the analysis.
+
+Call Data
+
+```{r}
+
+# 1. Read all columns as raw text and specify 'na' strings during import
+CSNT_All_Diversity_Test_Data24_26Scored <- read_excel(
+  "~/Desktop/Datasets/2026_10_22_CSNT_Complete_Item_Diversity_Scored.xlsx",
+  col_types = "text",
+  na = c("NULL", "null", "NA", "")
+)
+
+# 2. Convert Excel serial values to POSIXct datetime
+CSNT_All_Diversity_Test_Data24_26Scored <- CSNT_All_Diversity_Test_Data24_26Scored %>%
+  mutate(across(
+    c(timestarted, timecompleted), 
+    ~ convertToDateTime(as.numeric(.), tz = "UTC")
+  ))
+
+
+temp<- CSNT_All_Diversity_Test_Data24_26Scored 
+temp$timecompleted<-as.numeric(substr(temp$timecompleted, 1,4))
+CSNT_Complete_Item_Diversity_Clean_2025<-filter(temp, timecompleted==2025)
+```
+
+### A. Item Usage Report
+
+Item usage has been calculated based on the 2025 dataset.
+
+```{r}
+# 1. Calculate usage for all 'NR' items except those starting with 'NRT'
+item_usage_df <- CSNT_Complete_Item_Diversity_Clean_2025 %>%
+  dplyr::select(starts_with("NR"), -starts_with("NRT")) %>%
+  summarise(across(everything(), ~ sum(!is.na(.)))) %>%
+  pivot_longer(
+    cols = everything(),
+    names_to = "item_id",
+    values_to = "usage_count"
+  ) %>%
+  mutate(
+    total_records = nrow(CSNT_Complete_Item_Diversity_Clean_2025),
+    usage_pct     = (usage_count / total_records) * 100
+  ) %>%
+  arrange(desc(usage_count))
+
+# Quick verification: Check how many items were matched
+cat("Identified", nrow(item_usage_df), "items starting with NR (excluding NRT).\n")
+```
+
+```{r}
+ggplot(item_usage_df, aes(x = reorder(item_id, usage_count), y = usage_count)) +
+  geom_col(fill = "#2b5c8f", width = 0.8) +
+  coord_flip() +
+  scale_y_continuous(
+    labels = comma, 
+    breaks = seq(0, 70000, by = 5000),   # 5,000 intervals
+    expand = expansion(mult = c(0, 0.05))
+  ) +
+  labs(
+    title = "Tabel 1: Item Usage: NR Items",
+    x = "Item ID",
+    y = "Number of Administrations (Non-NA Responses)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.y = element_blank(),
+    axis.text.y = element_text(size = 5), # Smaller text to avoid collision
+    axis.text.x = element_text(angle = 45, hjust = 1) # Slanted so 5,000 tick numbers don't overlap
+  )
+##ggsave("item_usage.png", plot = p, width = 12, height = 30, dpi = 300, limitsize = FALSE)
+```
+
+Item Usage by Percentage can be found here.
+
+```{r}
+# 1. Read Excel File & Extract Item Difficulties
+# ------------------------------------------------------------------
+item_params_df <- read_excel("~/Desktop/Datasets/2026_CSNT_ItemParameter2021_Usage2026.xlsx") %>%
+  dplyr::select(Item_id, Item_Difficulty)
+
+# 2. Merge Difficulty & Compute Panels / Exposure Tiers
+# ------------------------------------------------------------------
+num_panels <- 2  
+
+item_usage_faceted <- item_usage_df %>%
+  # Join Item_Difficulty matching 'item_id' in your data to 'ItemID' in the Excel sheet
+  left_join(item_params_df, by = c("item_id" = "Item_id")) %>%
+  arrange(desc(usage_count)) %>%
+  mutate(
+    panel_group = ceiling(row_number() / (n() / num_panels)),
+    panel_label = factor(
+      paste0("Group ", panel_group, " of ", num_panels),
+      levels = paste0("Group ", 1:num_panels, " of ", num_panels)
+    ),
+    usage_tier = factor(
+      case_when(
+        usage_pct < 10                    ~ "< 10%",
+        usage_pct >= 10 & usage_pct <= 20 ~ "10% – 20%",
+        usage_pct > 20                    ~ "> 20%"
+      ),
+      levels = c("< 10%", "10% – 20%", "> 20%")
+    )
+  )
+
+# 3. Usage Tier Summary Table
+# ------------------------------------------------------------------
+usage_tier_summary <- item_usage_faceted %>%
+  dplyr::count(usage_tier, name = "item_count", .drop = FALSE) %>%
+  mutate(
+    percentage_of_bank = round((item_count / sum(item_count)) * 100, 1)
+  )
+
+print(usage_tier_summary)
+
+# 4. Graph: Exposure (Usage %) vs. Item Difficulty (Logits)
+# ------------------------------------------------------------------
+ggplot(item_usage_faceted, aes(x = Item_Difficulty, y = usage_pct)) +
+  geom_point(aes(color = usage_tier), size = 2.5, alpha = 0.85) +
+  geom_smooth(method = "loess", color = "#2b5c8f", fill = "grey80", se = TRUE) +
+  scale_color_manual(
+    name = "Exposure Tier",
+    values = c("< 10%" = "#d95f02", "10% – 20%" = "#7570b3", "> 20%" = "#1b9e77")
+  ) +
+  scale_y_continuous(labels = function(x) paste0(x, "%")) +
+  labs(
+    title = "Table 2: Item Exposure Rate vs. Item Difficulty",
+    subtitle = paste0(
+      "Matched items: K = ", sum(!is.na(item_usage_faceted$Item_Difficulty)),
+      " | Trend smoothed via LOESS"
+    ),
+    x = "Item Difficulty (Logits b)",
+    y = "Exposure Rate (% of Examinees)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank()
+  )
+```
+
+In Computerized Adaptive Testing (CAT), acceptable maximum item exposure rates (rmax) typically range **between 0.10 and 0.20** (10% to 20%), though the ideal threshold depends on the size of the item bank, test security requirements, and the specific control method used. For the purpose of description exposure rates are divided into three groups.
+
+The above results tell two things: Not many items are exposed excessively, however, most exposed items are the ones with +1 difficulty parameter. It is because the algorithm needs difficult items to feed into the candidate theta calculation.
+
+Add Grade Data Here
+
+```{r}
+# 1. Read the grade and demographics CSV
+CSNT_All_Grade_Type <- read_csv(
+  "~/Desktop/Datasets/2026_10_22_CSNT_All_Grade_Type.csv",
+  col_types = cols(.default = "c") # Character type prevents ID precision loss and mismatch errors
+)
+
+# Optional interactive inspection (comment out if rendering/knitting)
+View(CSNT_All_Grade_Type)
+
+# 2. Prepare grade & demographic fields from CSNT_All_Grade_Type
+grade_data <- CSNT_All_Grade_Type %>%
+  select(
+    fielddata, 
+    job_grade, 
+    gender, 
+    disability, 
+    application_form_applicant_type
+  ) %>%
+  distinct(fielddata, .keep_all = TRUE) # Deduplicate on fielddata
+
+# 3. Merge into your main cleaned test dataset
+CSNT_Complete_Item_Diversity_Clean_2025 <- CSNT_Complete_Item_Diversity_Clean_2025 %>%
+  mutate(fielddata = as.character(fielddata)) %>%
+  left_join(grade_data, by = "fielddata")
+```
+
+## 1PL Test Summary
+
+```{r 1pl_irt_pipeline, message=TRUE, warning=FALSE}
+
+# STEP 1: ISOLATE & CLEAN ITEM MATRIX (TYPE-SAFE)
+# =====================================================================
+
+# 1. Capture candidate identifiers aligned with row positions
+cand_ids <- CSNT_Complete_Item_Diversity_Clean_2025$fielddata
+
+# 2. Extract item columns (starts with NR, but not NRT)
+raw_items <- CSNT_Complete_Item_Diversity_Clean_2025 %>%
+  select(starts_with("NR"), -starts_with("NRT"))
+
+# 3. CRITICAL: Force all item columns to numeric (handles text "0"/"1" and NAs cleanly)
+raw_items_num <- raw_items %>%
+  mutate(across(everything(), ~ suppressWarnings(as.numeric(as.character(.x)))))
+
+# 4. Filter out items with 0 responses (all NA)
+valid_resp_counts <- colSums(!is.na(raw_items_num))
+items_non_empty <- raw_items_num[, valid_resp_counts > 0]
+
+# 5. Filter out items with 0 variance (all 0s or all 1s)
+has_variance <- sapply(items_non_empty, function(col) {
+  unique_vals <- unique(na.omit(col))
+  length(unique_vals) > 1
+})
+
+clean_items <- items_non_empty[, has_variance]
+
+# Summary of item filtering
+dropped_items <- setdiff(names(raw_items), names(clean_items))
+cat("Original items:", ncol(raw_items), "\n")
+cat("Retained items for 1PL:", ncol(clean_items), "\n")
+cat("Dropped items (0 responses or 0 variance):", length(dropped_items), "\n\n")
+
+# 6. Convert to numeric matrix for mirt
+clean_item_matrix <- data.matrix(clean_items) # data.matrix guarantees numeric storage mode
+
+# Quick sanity check: must return "numeric" or "integer"
+stopifnot(is.numeric(clean_item_matrix))
+
+# Define 1PL constraint: all items share the exact same slope parameter (a1)
+# while latent variance remains fixed to 1.0 by default
+model_1pl_syntax <- paste0(
+  "F1 = 1-", ncol(clean_item_matrix), "\n",
+  "CONSTRAIN = (1-", ncol(clean_item_matrix), ", a1)"
+)
+
+fit_1pl <- mirt(
+  data = clean_item_matrix,
+  model = mirt.model(model_1pl_syntax),
+  itemtype = "2PL",
+  SE = TRUE,
+  verbose = TRUE
+)
+
+# Extract item parameters (difficulty b)
+item_params <- coef(fit_1pl, IRTpars = TRUE, simplify = TRUE)$items
+
+# ========================================================================
+# STEP 3: SCORE CANDIDATES & MERGE BACK
+# 1. Estimate latent ability (theta) and standard errors using EAP
+person_scores <- fscores(fit_1pl, method = "EAP", full.scores = TRUE, full.scores.SE = TRUE)
+
+# 2. Create scoring tibble mapped to candidate IDs
+person_scores_df <- tibble(
+  fielddata      = cand_ids,
+  items_answered = rowSums(!is.na(clean_items)),
+  theta_1PL_new  = person_scores[, "F1"],
+  SE_1PL_new     = person_scores[, "SE_F1"]
+)
+
+# 3. Match back to original dataset
+CSNT_Final_With_Scores <- CSNT_Complete_Item_Diversity_Clean_2025 %>%
+  left_join(person_scores_df, by = "fielddata")
+
+# 4. Quick sanity check against earlier norm theta if available
+if ("NRTtheta" %in% names(CSNT_Final_With_Scores)) {
+cor_val <- cor(
+  CSNT_Final_With_Scores$theta_1PL_new, 
+  as.numeric(as.character(CSNT_Final_With_Scores$NRTtheta)), 
+  use = "complete.obs"
+)
+
+cat("Correlation with previous norm theta (NRTtheta):", round(cor_val, 4), "\n")
+}
+```
+
+### B. Item Difficulty Report
+
+#### B.1 CSNT Average item difficulty
+
+Based on the new 1PL analysis
+
+```{r}
+
+# 1. Extract item parameters and isolate difficulty 'b'
+item_pars <- coef(fit_1pl, IRTpars = TRUE, simplify = TRUE)$items
+b_df <- tibble(
+  item_id = rownames(item_pars),
+  b = item_pars[, "b"]
+)
+
+# 2. Bin into 1-unit intervals (e.g., -3 to -2, -2 to -1, etc.)
+min_b <- floor(min(b_df$b, na.rm = TRUE))
+max_b <- ceiling(max(b_df$b, na.rm = TRUE))
+
+b_binned <- b_df %>%
+  mutate(
+    bin = cut(
+      b,
+      breaks = seq(min_b, max_b, by = 0.5),
+      right = FALSE,
+      include.lowest = TRUE
+    )
+  ) %>%
+dplyr::count(bin, name = "frequency")
+
+# 3. Plot the bar chart
+ggplot(b_binned, aes(x = bin, y = frequency)) +
+  geom_col(fill = "#2b5c8f", color = "white", width = 0.85) +
+  geom_text(aes(label = frequency), vjust = -0.5, size = 4) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(
+    title = "Frequency Distribution of Item Difficulties (1PL / Rasch)",
+    subtitle = paste0("Total items: ", nrow(b_df), " | Bin width: 1.0 logit"),
+    x = "Item Difficulty Range (b in logits)",
+    y = "Number of Items (Frequency)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    panel.grid.minor = element_blank(),
+    panel.grid.major.x = element_blank(),
+    axis.text.x = element_text(angle = 30, hjust = 1)
+  )
+```
+
+According to the new 1PL Model estimation, of the 321 items evaluated in the model, only 5 items have positive difficulty parameters.
+
+#### B.2 Model fit
+
+Due to huge sample size, and CAT algorithm, Chi Square test will not work, as it is sample size dependent. Whereas, Mean Square (MSQ) is sample independent and acts as a measure of effect size. Items in teh CAT system are not Missing Completely at Random (NCAR)
+
+#### B.2 Person-Item Map (Wright Map) for 1PL analysis
+
+```{r}
+# 1. Extract 1PL person thetas (EAP estimates)
+person_thetas <- fscores(fit_1pl, method = "EAP")[, "F1"]
+
+# 2. Extract 1PL item difficulties (b parameter on the IRT metric)
+item_difficulties <- coef(fit_1pl, IRTpars = TRUE, simplify = TRUE)$items[, "b"]
+
+# 3. Generate the 1PL Wright Map
+wrightMap(
+  thetas = person_thetas, 
+  thresholds = item_difficulties,
+  main.title = "Wright Map: 1PL Items vs. Person Ability",
+  axis.persons = "Person Ability (Theta)",
+  axis.items = "Item Difficulty (b)",
+  show.item.names = TRUE,
+  label.items.srt = 45,        # 45-degree angle to keep item codes legible
+  label.items.cex = 0.6        # Scale text size
+)
+```
+
+The left panel represents person distribution while the right panel represents Item difficulty values. Because the person distribution sits clearly higher than the item distribution ($\bar{\theta} > \bar{b}$), it is obvious that the test is very easy in its current state.
+
+#### B.3 Item Parameter Drift
+
+```{r}
+CSNT_ItemParameter2021_Usage2026 <- read_excel("~/Desktop/Datasets/2026_CSNT_ItemParameter2021_Usage2026.xlsx")
+
+View(CSNT_ItemParameter2021_Usage2026)
+```
+
+```{r}
+# 1. Convert the matrix to a tibble and pull row names into an 'Item' column
+item_params_df <- item_params %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "Item") %>%
+  as_tibble()
+
+# 2. Join the two difficulty parameters
+matched_difficulties <- inner_join(
+  item_params_df %>% select(Item, Difficulty_b = b),
+  CSNT_ItemParameter2021_Usage2026 %>% select(Item_id, Item_Difficulty),
+  by = c("Item" = "Item_id")
+)
+
+# 3. Compute paired summary statistics
+comparison_summary <- matched_difficulties %>%
+  summarise(
+    Active_Items    = n(),
+    Mean_2026_Diff  = mean(Difficulty_b, na.rm = TRUE),
+    SD_2026_Diff    = sd(Difficulty_b, na.rm = TRUE),
+    Mean_2021_Diff  = mean(Item_Difficulty, na.rm = TRUE),
+    SD_2021_Diff    = sd(Item_Difficulty, na.rm = TRUE),
+    Mean_Difference = mean(Difficulty_b - Item_Difficulty, na.rm = TRUE),
+    Correlation     = cor(Difficulty_b, Item_Difficulty, use = "complete.obs")
+  )
+
+print(comparison_summary)
+```
+
+While mean difficulty of CSNT_2021_Norm is 0.025, the new 1PL analysis average difficulty parameter stands at -1.51, representing an item drift of -1.76
+
+Item Characteristic Curve
+
+```{r}
+# 1. Extract item difficulties
+b_params <- coef(fit_1pl, IRTpars = TRUE, simplify = TRUE)$items[, "b"]
+
+# 2. Generate ability grid (-4 to +4 logits)
+theta_seq <- seq(-4, 4, length.out = 200)
+
+# 3. Calculate Rasch probability: P(Theta) = 1 / (1 + exp(-(Theta - b)))
+icc_data <- expand_grid(
+  item_id = names(b_params),
+  theta   = theta_seq
+) %>%
+  mutate(
+    b = b_params[item_id],
+    prob = 1 / (1 + exp(-(theta - b)))
+  )
+
+# 4. Plot overlaid ICCs
+ggplot(icc_data, aes(x = theta, y = prob, group = item_id)) +
+  geom_line(alpha = 0.5, color = "#2b5c8f", linewidth = 0.7) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey50") +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  labs(
+    title = "Item Characteristic Curves (Overlaid)",
+    subtitle = "Dashed line marks P = 0.5 (Item Difficulty Threshold b)",
+    x = "Latent Trait Ability (Theta)",
+    y = "Probability of Correct Response P(Theta)"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+This item bank is good for only lower ability groups. A huge number of items measure very similar lower ability levels. Items concentrate heavily between $\theta = -3.0$ and $\theta = -1.0$.
+
+CSNT item bank consists of easy items. There is practically no item as ability exceeds +1.0. It will be very difficult to identify normal or high performing candidates with this set of items. While this is not the underlying goal of the test, it prevents a healthy distribution.
+
+```{r}
+# 1. Extract Person Abilities & Item Difficulties
+# -------------------------------------------------------------
+person_thetas <- fscores(fit_1pl, method = 'EAP')[, "F1"]
+person_df     <- tibble(theta = person_thetas)
+
+b_params <- coef(fit_1pl, IRTpars = TRUE, simplify = TRUE)$items[, "b"]
+
+theta_grid <- seq(-4, 4, length.out = 200)
+
+icc_data <- expand_grid(
+  item_id = names(b_params),
+  theta   = theta_grid
+) %>%
+  mutate(
+    b    = b_params[item_id],
+    prob = 1 / (1 + exp(-(theta - b)))
+  )
+
+# -------------------------------------------------------------
+# 2. Plot A: Item Characteristic Curves
+# -------------------------------------------------------------
+p_icc <- ggplot(icc_data, aes(x = theta, y = prob, group = item_id)) +
+  geom_line(alpha = 0.45, color = "#2b5c8f", linewidth = 0.6) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey40") +
+  scale_x_continuous(limits = c(-4, 4), breaks = seq(-4, 4, 1)) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  labs(
+    title = "Targeting Alignment: Item Curves vs. Person Ability Distribution",
+    subtitle = "Dashed line indicates P = 0.5 (Item Difficulty Threshold b)",
+    x = NULL,
+    y = "Probability P(Theta)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.x = element_blank(), # Hidden to align with density plot below
+    panel.grid.minor = element_blank()
+  )
+
+# -------------------------------------------------------------
+# 3. Plot B: Person Ability Density (Sample Population)
+# -------------------------------------------------------------
+p_density <- ggplot(person_df, aes(x = theta)) +
+  geom_density(fill = "#e07a5f", color = "#c45d42", alpha = 0.6, adjust = 1.2) +
+  geom_vline(
+    xintercept = mean(person_thetas, na.rm = TRUE),
+    color = "#8b2610", linetype = "dashed", linewidth = 0.8
+  ) +
+  scale_x_continuous(limits = c(-4, 4), breaks = seq(-4, 4, 1)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  labs(
+    x = "Latent Trait Ability (Theta)",
+    y = "Person Density"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.grid.minor = element_blank()
+  )
+
+# -------------------------------------------------------------
+# 4. Combine Both Stacked Plots (Shared X-axis)
+# -------------------------------------------------------------
+# Requires patchwork (install.packages("patchwork") if needed)
+combined_plot <- p_icc / p_density + plot_layout(heights = c(3, 1))
+
+combined_plot
+```
+
+### C. Local Independence-item Correlations
+
+```{r}
+# 1. CAT-ADJUSTED YEN'S Q3 LOCAL INDEPENDENCE EVALUATION
+# ==============================================================================
+if (!exists("fit_1pl")) {
+  stop("Model object 'fit_1pl' not found.")
+}
+
+resp_mat  <- extract.mirt(fit_1pl, "data")
+theta_est <- fscores(fit_1pl, method = "EAP", full.scores.SE = FALSE)
+
+# Subsample 25,000 candidates for memory safety (24 GB limit)
+set.seed(2026)
+if (nrow(resp_mat) > 25000) {
+  idx       <- sample(seq_len(nrow(resp_mat)), 25000)
+  resp_sub  <- resp_mat[idx, ]
+  theta_sub <- theta_est[idx, , drop = FALSE]
+} else {
+  resp_sub  <- resp_mat
+  theta_sub <- theta_est
+}
+
+# Compute residuals: Observed (0/1) - Expected Probability P(X = 1 | theta)
+item_names <- colnames(resp_sub)
+resid_mat  <- matrix(NA_real_, nrow = nrow(resp_sub), ncol = length(item_names))
+colnames(resid_mat) <- item_names
+
+for (j in seq_along(item_names)) {
+  extr_item      <- extract.item(fit_1pl, j)
+  exp_prob       <- probtrace(extr_item, theta_sub)[, 2]
+  resid_mat[, j] <- resp_sub[, j] - exp_prob
+}
+
+# Compute pairwise sample sizes N_jk (how many candidates took BOTH items)
+valid_ind  <- !is.na(resid_mat)
+n_pair_mat <- crossprod(valid_ind)
+
+# Compute Q3 correlation matrix
+q3_matrix <- cor(resid_mat, use = "pairwise.complete.obs")
+diag(q3_matrix) <- NA
+
+# Combine Q3 and N_jk into long table, filtering for N_jk >= 100
+q3_df <- as.data.frame(as.table(q3_matrix), stringsAsFactors = FALSE) %>%
+  rename(Item_1 = Var1, Item_2 = Var2, Q3 = Freq)
+
+n_df <- as.data.frame(as.table(n_pair_mat), stringsAsFactors = FALSE) %>%
+  rename(Item_1 = Var1, Item_2 = Var2, N_Pair = Freq)
+
+q3_cat_pairs <- q3_df %>%
+  inner_join(n_df, by = c("Item_1", "Item_2")) %>%
+  filter(!is.na(Q3), Item_1 < Item_2, N_Pair >= 100)
+
+# Compute CAT routing baseline (mean Q3) and centered threshold
+cat_baseline_q3 <- mean(q3_cat_pairs$Q3, na.rm = TRUE)
+cat_cutoff_q3   <- cat_baseline_q3 + 0.20
+
+q3_cat_pairs <- q3_cat_pairs %>%
+  mutate(
+    Stem_1      = sub("_.*$", "", Item_1),
+    Stem_2      = sub("_.*$", "", Item_2),
+    Same_Stem   = ifelse(Stem_1 == Stem_2, "Yes (Testlet)", "No"),
+    Q3_Centered = round(Q3 - cat_baseline_q3, 4),
+    Status      = ifelse(Q3 > cat_cutoff_q3, "Flagged (Centered Q3 > 0.20)", "Independent")
+  )
+
+q3_cat_flagged <- q3_cat_pairs %>%
+  filter(Q3 > cat_cutoff_q3) %>%
+  mutate(Q3 = round(Q3, 4)) %>%
+  arrange(desc(Q3_Centered))
+
+# ==============================================================================
+# 2. HISTOGRAM OF CAT-ADJUSTED Q3 DISTRIBUTION
+# ==============================================================================
+theme_clean_report <- theme_minimal(base_size = 12) +
+  theme(
+    plot.background   = element_rect(fill = "white", color = NA),
+    panel.background  = element_rect(fill = "white", color = NA),
+    panel.grid.major  = element_line(color = "#e2e8f0", linewidth = 0.5),
+    panel.grid.minor  = element_blank(),
+    axis.text         = element_text(color = "#1e293b", size = 10),
+    axis.title        = element_text(color = "#0f172a", face = "bold"),
+    plot.title        = element_text(color = "#0f172a", face = "bold", size = 14),
+    plot.subtitle     = element_text(color = "#475569", size = 11),
+    legend.position   = "top"
+  )
+
+p_q3_hist <- ggplot(q3_cat_pairs, aes(x = Q3, fill = Status)) +
+  # Shaded violation region to the right of the threshold
+  annotate("rect", xmin = cat_cutoff_q3, xmax = Inf, ymin = 0, ymax = Inf,
+           fill = "#fee2e2", alpha = 0.45) +
+  geom_histogram(bins = 60, color = "white", alpha = 0.9) +
+  # Baseline mean vertical line
+  geom_vline(xintercept = cat_baseline_q3, linetype = "dashed", color = "#1e293b", linewidth = 0.9) +
+  # Critical threshold vertical line (Baseline + 0.20)
+  geom_vline(xintercept = cat_cutoff_q3, linetype = "dashed", color = "#dc2626", linewidth = 1.0) +
+  # Annotations for vertical reference lines
+  annotate("text", x = cat_baseline_q3 - 0.015, y = Inf, vjust = 1.6, hjust = 1,
+           label = paste0("CAT Baseline Mean = ", round(cat_baseline_q3, 3)),
+           color = "#1e293b", fontface = "bold", size = 3.5) +
+  annotate("text", x = cat_cutoff_q3 + 0.015, y = Inf, vjust = 3.2, hjust = 0,
+           label = paste0("LD Threshold (+0.20) = ", round(cat_cutoff_q3, 3)),
+           color = "#dc2626", fontface = "bold", size = 3.5) +
+  scale_fill_manual(
+    values = c("Independent" = "#3b82f6", "Flagged (Centered Q3 > 0.20)" = "#dc2626"),
+    name = "Local Independence Status:"
+  ) +
+  labs(
+    title = "Distribution of Pairwise Yen's Q3 Residual Correlations (CAT Item Bank)",
+    subtitle = paste0("Evaluated across ", format(nrow(q3_cat_pairs), big.mark = ","), 
+                      " item pairs with N >= 100 co-administrations"),
+    x = "Pairwise Residual Correlation (Yen's Q3)",
+    y = "Number of Item Pairs"
+  ) +
+  theme_clean_report
+
+print(p_q3_hist)
+
+# ==============================================================================
+# 3. QUARTO SUMMARY REPORT & FLAGGED PAIRS TABLE
+# ==============================================================================
+cat("\n## CAT-Adjusted Local Independence Evaluation (Yen's Q3)\n\n")
+cat("- **Item pairs with N >= 100 co-administrations:**", nrow(q3_cat_pairs), "\n")
+cat("- **CAT routing baseline (Mean off-diagonal Q3):**", round(cat_baseline_q3, 4), "\n")
+cat("- **Critical LD cutoff threshold (Baseline + 0.20):**", round(cat_cutoff_q3, 4), "\n")
+cat("- **Flagged local dependence violations (Q3 - Baseline > 0.20):**", nrow(q3_cat_flagged), "\n\n")
+
+if (nrow(q3_cat_flagged) == 0) {
+  cat("> **Result:** No item pairs exceed the CAT-adjusted local dependence threshold ($Q_3 - \\bar{Q}_3 > 0.20$). Local independence is supported across the adaptive item bank.\n\n")
+} else {
+  print(
+    kable(
+      head(q3_cat_flagged, 25) %>%
+        select(Item_1, Item_2, Same_Stem, N_Pair, Q3, Q3_Centered),
+      col.names = c("Item 1", "Item 2", "Shared Stimulus?", "Co-Admin N", "Raw Q3", "Centered Q3 (Q3 - Baseline)"),
+      caption = "Item Pairs Exceeding CAT-Adjusted Local Dependence Threshold (Centered Q3 > 0.20)"
+    )
+  )
+  cat("\n\n")
+}
+
+# Clean up large temporary matrices
+rm(resp_mat, resp_sub, resid_mat, valid_ind, n_pair_mat)
+gc()
+```
+
+-   **Sufficiently Sampled Pairs (**$N \ge 100$): Filtering out sparsely co-administered CAT pairs narrowed the evaluation from 31,726 noisy pairs down to **4,375 reliable item pairs**.
+
+-   **CAT Routing Baseline (**$\bar{Q}_3 = 0.1999$): The adaptive item selection algorithm induces a predictable positive residual correlation baseline of $\approx 0.20$ across co-administered items.
+
+-   **Critical Threshold (**$0.3999$): Adding the standard $+0.20$ Christensen et al. (2017) margin places the true local dependence cutoff at $Q_3 > 0.40$.
+
+-   **Strong Overall Local Independence (**$96.0\%$ Clean): Out of 4,375 reliably co-administered item pairs, **4,199 pairs (**$96.0\%$) satisfy local independence, while only **176 pairs (**$4.0\%$) exhibit excess residual correlation ($Q_3 - \bar{Q}_3 > 0.20$).
+
+176 flagged pairs typically fall into one of two distinct buckets:
+
+-   **Intentional Testlets (Shared Data Tables / Charts):** Multiple questions linked to the same stimulus block
+
+-   **True Item Redundancy / Clueing (Different Stems):** Two supposedly independent items from different stimuli that share an identical calculation trap
+
+### D. Adverse Impact
+
+Analysis carried out for main diversity/protected groups do not show an adverse impact up to 80th percentiles
+
+D.1 Distribution of Diversity Groups based on grades
+
+```{r}
+# 1. VERIFY DATA & DEFINE TARGET GRADES AND VARIABLES
+if (!exists("CSNT_Complete_Item_Diversity_Clean_2025")) {
+  stop("CSNT_Complete_Item_Diversity_Clean_2025 is not present in the workspace.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+diversity_vars <- c(
+  "gender",
+  "disability",
+  "application_form_applicant_type",
+  "select_your_ethnicity",
+  "what_is_your_sexual_orientation",
+  "select_your_ethnic_group",
+  "select_your_current_age_group",
+  "what_is_your_religion_or_belief",
+  "were_you_eligible_for_free_school_meals_at_any_point"
+)
+
+# Identify grade column name safely
+col_grade <- intersect(
+  c("job_grade_clean", "job_grade.x", "job_grade", "Job_Grade", "Grade"), 
+  colnames(CSNT_Complete_Item_Diversity_Clean_2025)
+)[1]
+
+# Verify all diversity variables exist in the dataset
+missing_vars <- setdiff(diversity_vars, colnames(CSNT_Complete_Item_Diversity_Clean_2025))
+if (length(missing_vars) > 0) {
+  warning("The following variables were not found in the dataset and will be skipped: ", paste(missing_vars, collapse = ", "))
+  diversity_vars <- intersect(diversity_vars, colnames(CSNT_Complete_Item_Diversity_Clean_2025))
+}
+
+# 2. COMPUTE FREQUENCIES FOR EACH GRADE & DIVERSITY VARIABLE
+grade_sheet_mapping <- list(
+  "Administrative Officer"   = "Admin Officer",
+  "Executive Officer"        = "Exec Officer",
+  "Higher Executive Officer" = "Higher Exec Officer",
+  "Senior Executive Officer" = "Senior Exec Officer",
+  "Grade 7"                  = "Grade 7",
+  "Grade 6"                  = "Grade 6"
+)
+
+wb <- createWorkbook()
+
+for (full_grade in target_grades) {
+  sheet_name <- grade_sheet_mapping[[full_grade]]
+  addWorksheet(wb, sheet_name)
+  
+  # Filter data for current grade
+  grade_df <- CSNT_Complete_Item_Diversity_Clean_2025 %>%
+    filter(.data[[col_grade]] == full_grade)
+  
+  start_row <- 1
+  
+  for (var_name in diversity_vars) {
+    # Compute frequency table including missing/NA/NULL values explicitly
+    var_freq <- grade_df %>%
+      mutate(Category = as.character(.data[[var_name]])) %>%
+      mutate(Category = ifelse(is.na(Category) | Category == "" | Category == "NULL", "Missing / Not Stated", Category)) %>%
+      group_by(Category) %>%
+      summarise(Frequency = n(), .groups = "drop") %>%
+      mutate(
+        Percentage = round(Frequency / sum(Frequency) * 100, 2),
+        Variable   = var_name
+      ) %>%
+      arrange(desc(Frequency)) %>%
+      select(Variable, Category, Frequency, Percentage)
+    
+    # Write header title for this variable section
+    writeData(wb, sheet_name, paste0("Variable: ", var_name), startRow = start_row, startCol = 1)
+    
+    # Write data frame table
+    writeData(wb, sheet_name, var_freq, startRow = start_row + 1, startCol = 1)
+    
+    # Add spacing between variable tables
+    start_row <- start_row + nrow(var_freq) + 4
+  }
+}
+
+# 3. SAVE WORKBOOK
+excel_filename <- "CSNT_Diversity_Group_Frequencies_by_Grade2025.xlsx"
+saveWorkbook(wb, excel_filename, overwrite = TRUE)
+cat("\nWorkbook successfully saved with separate sheets for each grade:", excel_filename, "\n")
+
+
+# 4. PREVIEW FREQUENCY TABLE IN QUARTO REPORT (E.G., ADMINISTRATIVE OFFICER)
+cat("### Sample Frequency Preview: Administrative Officer (Gender & Disability)\n")
+preview_df <- CSNT_Complete_Item_Diversity_Clean_2025 %>%
+  filter(.data[[col_grade]] == "Administrative Officer") %>%
+  select(gender, disability) %>%
+  pivot_longer(cols = everything(), names_to = "Variable", values_to = "Category") %>%
+  mutate(Category = ifelse(is.na(Category) | Category == "" | Category == "NULL", "Missing / Not Stated", Category)) %>%
+  group_by(Variable, Category) %>%
+  summarise(Frequency = n(), .groups = "drop_last") %>%
+  mutate(Percentage = round(Frequency / sum(Frequency) * 100, 2))
+
+kable(preview_df, caption = "Frequency Breakdown Preview for Administrative Officer")
+```
+
+Setting new percentiles based on new theta estimation.
+
+```{r}
+# 1. Add percentile ranks and a threshold pass flag (e.g., 30th percentile cut-off)
+# Adjust 'pass_threshold_pctl' to match your Civil Service operational cut-score
+pass_threshold_pctl <- 30 
+
+CSNT_Final_With_Scores <- CSNT_Final_With_Scores %>%
+  filter(!is.na(theta_1PL_new)) %>%
+  mutate(
+    # Percentile rank from 0 to 100
+    percentile_1PL = round(percent_rank(theta_1PL_new) * 100, 2),
+    # Binary selection indicator (1 = Pass / Selected, 0 = Did not meet cut-score)
+    passed_cut = if_else(percentile_1PL >= pass_threshold_pctl, 1, 0)
+  )
+
+# Verify percentile distribution
+summary(CSNT_Final_With_Scores$percentile_1PL)
+```
+
+Correlation between current percentile and newly calculated 1PL theta percentiles
+
+```{r}
+# Fast, in-place conversion (only runs once, does nothing if already numeric)
+if (!is.numeric(CSNT_Final_With_Scores$NRTPercentileScore)) {
+  CSNT_Final_With_Scores$NRTPercentileScore <- as.numeric(CSNT_Final_With_Scores$NRTPercentileScore)
+}
+```
+
+```{r}
+# 1. Clear unused memory
+gc()
+
+# 2. Extract and strictly force both vectors to numeric
+x_raw <- suppressWarnings(as.numeric(CSNT_Final_With_Scores$percentile_1PL))
+y_raw <- suppressWarnings(as.numeric(CSNT_Final_With_Scores$NRTPercentileScore))
+
+# 3. Identify indices with complete, non-NA pairs
+valid_idx <- which(!is.na(x_raw) & !is.na(y_raw))
+
+# 4. Subset to valid observations
+x_clean <- x_raw[valid_idx]
+y_clean <- y_raw[valid_idx]
+
+# Check types and counts
+cat("Number of complete candidate pairs:", length(valid_idx), "\n")
+cat("x is numeric:", is.numeric(x_clean), "\n")
+cat("y is numeric:", is.numeric(y_clean), "\n\n")
+
+# 5. Pearson correlation (fast and uses negligible memory)
+cor_p <- cor(x_clean, y_clean, method = "pearson")
+cat("Pearson correlation (r):", round(cor_p, 4), "\n")
+
+# 6. Clean up temporary vectors to free RAM
+rm(x_raw, y_raw, x_clean, y_clean, valid_idx)
+gc()
+```
+
+The following protected groups besides External/Internal candidates were analysed. 
+
+1.     Ethnicity; White (Ref.) - Other
+
+2.     Gender; Man(Ref.) - Woman
+
+3.     Disability; Yes - No (Ref.)
+
+4.     Religion; Christian(Ref.) - Other (This variable can be retested taking 'No religion' as the reference group)
+
+5.     External - Internal(Ref.)
+
+6.     Sexual Orientation; Heterosexual Straight (Ref.) – Other
+
+7.     SES\*
+
+Below is the table for the pass rates at specific percentiles for the existing NRTtheta scores for all grades.
+
+```{r}
+# 1. IDENTIFY COLUMNS SAFELY & DEFINE TARGET GRADES
+
+if (!exists("CSNT_Final_With_Scores")) {
+  stop("CSNT_Final_With_Scores is not present in the workspace.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+# Detect column names dynamically
+col_grade <- intersect(
+  c("job_grade_clean", "job_grade.x", "job_grade", "Job_Grade", "Grade"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+col_score <- intersect(
+  c("NRTPercentileScore", "PercentileScore", "percentile_score", "Percentile"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+
+# 2. FILTER & COMPUTE PASS/FAIL COUNTS ACROSS CUTOFFS
+thresholds <- c(35, 40, 45, 50)
+
+pass_summary_multi <- CSNT_Final_With_Scores %>%
+  # Filter for the 6 target grades and non-missing scores
+  filter(.data[[col_grade]] %in% target_grades) %>%
+  mutate(
+    Grade = factor(.data[[col_grade]], levels = target_grades),
+    Score = as.numeric(as.character(.data[[col_score]]))
+  ) %>%
+  filter(!is.na(Score)) %>%
+  # Calculate pass/fail status for each threshold across candidate records
+  group_by(Grade) %>%
+  summarise(
+    Total_Candidates = n(),
+    
+    # 35th Percentile
+    Passed_35 = sum(Score >= 35),
+    Failed_35 = sum(Score < 35),
+    Pass_Rate_35_Pct = round(mean(Score >= 35) * 100, 2),
+    
+    # 40th Percentile
+    Passed_40 = sum(Score >= 40),
+    Failed_40 = sum(Score < 40),
+    Pass_Rate_40_Pct = round(mean(Score >= 40) * 100, 2),
+    
+    # 45th Percentile
+    Passed_45 = sum(Score >= 45),
+    Failed_45 = sum(Score < 45),
+    Pass_Rate_45_Pct = round(mean(Score >= 45) * 100, 2),
+    
+    # 50th Percentile
+    Passed_50 = sum(Score >= 50),
+    Failed_50 = sum(Score < 50),
+    Pass_Rate_50_Pct = round(mean(Score >= 50) * 100, 2),
+    
+    .groups = "drop"
+  ) %>%
+  arrange(Grade)
+
+
+# 3. DISPLAY SUMMARY TABLES
+
+kable(
+  pass_summary_multi,
+  caption = "Pass Counts, Fail Counts, and Pass Rates (%) by Job Grade Across Percentile Cutoffs"
+)
+```
+
+There is no adverse impact in any protected group up to 50th percentile in the current parameter settings.
+
+### D.1 GENDER (1PL)
+
+```{r}
+# 1. VERIFY DATA & PREPARE DATASET (GENDER)
+# ========================================================================
+if (!exists("CSNT_Final_With_Scores")) {
+  stop("CSNT_Final_With_Scores is not present in the environment.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+# Identify grade column safely
+col_grade <- intersect(
+  c("job_grade", "job_grade.x", "Job_Grade", "Grade"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+# Support both percentile_1PL and percentile_1PL_new column names
+col_pct <- intersect(
+  c("percentile_1PL_new", "percentile_1PL", "Percentile"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+if (is.na(col_pct)) {
+  stop("Percentile column not found. Run percent_rank() step first.")
+}
+
+# Filter for target grades, binary gender (Man vs. Woman), and non-missing scores
+df_ai_prep <- CSNT_Final_With_Scores %>%
+  filter(.data[[col_grade]] %in% target_grades) %>%
+  filter(gender %in% c("Man", "Woman")) %>%
+  filter(!is.na(.data[[col_pct]]), !is.na(theta_1PL_new)) %>%
+  mutate(
+    Grade      = factor(.data[[col_grade]], levels = target_grades),
+    Gender     = factor(gender, levels = c("Man", "Woman")),
+    Percentile = round(as.numeric(.data[[col_pct]])) # Clean integers 0..100
+  ) %>%
+  filter(Percentile >= 1, Percentile <= 99)
+
+
+# 2. CALCULATE ADVERSE IMPACT RATIO FOR EACH PERCENTILE (1 TO 99) BY GRADE
+# ========================================================================
+# Step A: Grand totals per grade and gender (denominators)
+total_counts_per_grade <- df_ai_prep %>%
+  group_by(Grade) %>%
+  summarise(
+    Grand_Total_Man   = sum(Gender == "Man"),
+    Grand_Total_Woman = sum(Gender == "Woman"),
+    .groups           = "drop"
+  )
+
+# Step B: Counts and theta distribution per percentile
+pct_counts <- df_ai_prep %>%
+  group_by(Grade, Percentile) %>%
+  summarise(
+    Count_Man        = sum(Gender == "Man"),
+    Count_Woman      = sum(Gender == "Woman"),
+    Mean_Theta_Man   = mean(theta_1PL_new[Gender == "Man"], na.rm = TRUE),
+    Mean_Theta_Woman = mean(theta_1PL_new[Gender == "Woman"], na.rm = TRUE),
+    SD_Theta_Man     = sd(theta_1PL_new[Gender == "Man"], na.rm = TRUE),
+    SD_Theta_Woman   = sd(theta_1PL_new[Gender == "Woman"], na.rm = TRUE),
+    .groups          = "drop"
+  )
+
+# Step C: Cumulative selection rates and Adverse Impact Ratios
+# Created here before plotting or export
+percentile_ai_summary <- pct_counts %>%
+  left_join(total_counts_per_grade, by = "Grade") %>%
+  arrange(Grade, desc(Percentile)) %>% # Descending for reverse cumulative sums
+  group_by(Grade) %>%
+  mutate(
+    # Cumulative candidates meeting or exceeding cut-off
+    Cum_Passed_Man   = cumsum(Count_Man),
+    Cum_Passed_Woman = cumsum(Count_Woman),
+    
+    # Selection Rates
+    Cum_Rate_Man   = Cum_Passed_Man / Grand_Total_Man,
+    Cum_Rate_Woman = Cum_Passed_Woman / Grand_Total_Woman,
+    
+    # AIR (Woman / Man)
+    Adverse_Impact_Ratio = round(Cum_Rate_Woman / ifelse(Cum_Rate_Man == 0, NA, Cum_Rate_Man), 4),
+    
+    # 4/5ths Rule flag
+    Status_4_5ths = ifelse(Adverse_Impact_Ratio < 0.80, "ADVERSE IMPACT (< 0.80)", "PASS (>= 0.80)"),
+    
+    # Effect Size (Cohen's d)
+    Pooled_SD_Pct = sqrt((replace_na(SD_Theta_Man, 0)^2 + replace_na(SD_Theta_Woman, 0)^2) / 2),
+    Effect_Size_d = ifelse(Pooled_SD_Pct > 0, round((Mean_Theta_Woman - Mean_Theta_Man) / Pooled_SD_Pct, 4), 0)
+  ) %>%
+  arrange(Grade, Percentile) %>%
+  select(
+    Grade, Percentile, Count_Man, Count_Woman,
+    Cum_Passed_Man, Cum_Passed_Woman,
+    Cum_Rate_Man, Cum_Rate_Woman,
+    Adverse_Impact_Ratio, Status_4_5ths,
+    Mean_Theta_Man, Mean_Theta_Woman, Effect_Size_d
+  ) %>%
+  ungroup()
+
+
+# 3. VISUALIZATION: MULTI-PANEL ADVERSE IMPACT RATIO CHART BY GRADE
+# ========================================================================
+theme_clean_report <- theme_minimal(base_size = 12) +
+  theme(
+    plot.background   = element_rect(fill = "white", color = NA),
+    panel.background  = element_rect(fill = "white", color = NA),
+    panel.grid.major  = element_line(color = "#e2e8f0", linewidth = 0.5),
+    panel.grid.minor  = element_blank(),
+    axis.text         = element_text(color = "#1e293b", size = 10),
+    axis.title        = element_text(color = "#0f172a", face = "bold"),
+    plot.title        = element_text(color = "#0f172a", face = "bold", size = 14),
+    plot.subtitle     = element_text(color = "#475569", size = 11),
+    strip.background  = element_rect(fill = "#f1f5f9", color = NA),
+    strip.text        = element_text(color = "#0f172a", face = "bold")
+  )
+
+p_gender_ai <- ggplot(percentile_ai_summary, aes(x = Percentile, y = Adverse_Impact_Ratio)) +
+  # Shaded region indicating Adverse Impact (< 0.80)
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = 0, ymax = 0.80, 
+           fill = "#fee2e2", alpha = 0.6) +
+  # 4/5ths Rule threshold line at 0.80
+  geom_hline(yintercept = 0.80, linetype = "dashed", color = "#dc2626", linewidth = 0.9) +
+  # 1.0 Parity line
+  geom_hline(yintercept = 1.00, linetype = "dotted", color = "#64748b", linewidth = 0.6) +
+  # Curve of Adverse Impact Ratio across percentiles
+  geom_line(color = "#2563eb", linewidth = 1.1) +
+  # Annotate the threshold
+  annotate("text", x = 18, y = 0.76, label = "4/5ths Rule Threshold (0.80)", 
+           color = "#dc2626", size = 3, fontface = "italic") +
+  facet_wrap(~ Grade, ncol = 2) +
+  scale_y_continuous(
+    limits = c(0.4, 1.4), 
+    breaks = seq(0.4, 1.4, by = 0.2),
+    labels = scales::number_format(accuracy = 0.1)
+  ) +
+  scale_x_continuous(breaks = seq(10, 90, by = 20)) +
+  labs(
+    title = "Gender Adverse Impact Ratio (AIR) by Grade Across Percentiles",
+    subtitle = "Values below the dashed red line (AIR < 0.80) indicate potential adverse impact (Woman / Man)",
+    x = "Percentile Cut-off Score (Passing >= P)",
+    y = "Adverse Impact Ratio (AIR)"
+  ) +
+  theme_clean_report
+
+print(p_gender_ai)
+
+
+# 4. EXPORT EACH GRADE TO SEPARATE SHEETS IN ONE EXCEL WORKBOOK
+# ========================================================================
+wb <- createWorkbook()
+
+# Sheet name mapping (Excel limits sheet names to 31 characters)
+grade_sheet_names <- list(
+  "Administrative Officer"   = "Admin Officer",
+  "Executive Officer"        = "Exec Officer",
+  "Higher Executive Officer" = "Higher Exec Officer",
+  "Senior Executive Officer" = "Senior Exec Officer",
+  "Grade 7"                  = "Grade 7",
+  "Grade 6"                  = "Grade 6"
+)
+
+# Header style: light gray background with bold dark text
+header_style <- createStyle(
+  fontColour = "#0f172a", 
+  fgFill = "#e2e8f0", 
+  textDecoration = "bold", 
+  halign = "center",
+  border = "bottom",
+  borderColour = "#94a3b8"
+)
+
+# Base cell style ensuring readable dark text on white cells
+body_style <- createStyle(
+  fontColour = "#1e293b",
+  fgFill = "#ffffff",
+  halign = "left"
+)
+
+# Soft red highlight style for rows violating the 4/5ths rule
+violation_style <- createStyle(
+  fontColour = "#991b1b",
+  fgFill = "#fee2e2"
+)
+
+for (grd in target_grades) {
+  sheet_name <- grade_sheet_names[[grd]]
+  addWorksheet(wb, sheet_name)
+  
+  grade_data_export <- percentile_ai_summary %>%
+    filter(Grade == grd) %>%
+    select(-Grade)
+  
+  writeData(wb, sheet_name, grade_data_export, startRow = 1, startCol = 1)
+  
+  # Apply base body style
+  addStyle(wb, sheet_name, body_style, 
+           rows = 2:(nrow(grade_data_export) + 1), 
+           cols = 1:ncol(grade_data_export), 
+           gridExpand = TRUE)
+  
+  # Apply header style
+  addStyle(wb, sheet_name, header_style, 
+           rows = 1, 
+           cols = 1:ncol(grade_data_export), 
+           gridExpand = TRUE)
+  
+  # Highlight rows where AIR < 0.80
+  violation_rows <- which(grade_data_export$Adverse_Impact_Ratio < 0.80) + 1
+  if (length(violation_rows) > 0) {
+    addStyle(wb, sheet_name, violation_style, 
+             rows = violation_rows, 
+             cols = 1:ncol(grade_data_export), 
+             gridExpand = TRUE)
+  }
+  
+  setColWidths(wb, sheet_name, cols = 1:ncol(grade_data_export), widths = "auto")
+}
+
+excel_filename <- "CSNT_Gender_Adverse_Impact_by_Grade_2025.xlsx"
+saveWorkbook(wb, excel_filename, overwrite = TRUE)
+cat("Excel report successfully created with separate sheets:", excel_filename, "\n\n")
+
+
+# 5. QUARTO SUMMARY: AI VIOLATION STATUS FOR EACH GRADE
+# ========================================================================
+cat("## Adverse Impact Summary by Grade (4/5ths Rule Evaluation)\n\n")
+
+for (grd in target_grades) {
+  cat("### Grade:", grd, "\n\n")
+  
+  grade_df <- percentile_ai_summary %>% filter(Grade == grd)
+  
+  # Check for percentiles where Adverse Impact Ratio is strictly below 0.80
+  ai_violations <- grade_df %>%
+    filter(Adverse_Impact_Ratio < 0.80) %>%
+    select(
+      Percentile, 
+      Cum_Rate_Man, 
+      Cum_Rate_Woman, 
+      Adverse_Impact_Ratio, 
+      Effect_Size_d
+    )
+  
+  if (nrow(ai_violations) == 0) {
+    cat("> **Result:** There is **no adverse impact** for", grd, "across any percentile cutoff (1 to 99). The Adverse Impact Ratio remains $\\ge 0.80$ at all evaluated score levels.\n\n")
+  } else {
+    pct_range <- paste0(min(ai_violations$Percentile), "th to ", max(ai_violations$Percentile), "th percentile")
+    cat("> **Result: ADVERSE IMPACT DETECTED** for", grd, "at", nrow(ai_violations), "percentile cut-off levels (spanning ", pct_range, ").\n\n")
+    
+    # Display the table of violating percentiles
+    print(
+      kable(
+        ai_violations %>%
+          mutate(
+            Cum_Rate_Man   = paste0(round(Cum_Rate_Man * 100, 1), "%"),
+            Cum_Rate_Woman = paste0(round(Cum_Rate_Woman * 100, 1), "%")
+          ),
+        col.names = c("Percentile Cutoff", "Male Pass Rate", "Female Pass Rate", "AIR (Woman/Man)", "Cohen's d"),
+        caption = paste("Percentiles with Adverse Impact Violations (AIR < 0.80) -", grd)
+      )
+    )
+    cat("\n\n")
+  }
+}
+
+### D.2 Disability
+
+# 1. VERIFY DATA & PREPARE DATASET (DISABILITY: 'No' vs 'Yes')
+# ========================================================================
+if (!exists("CSNT_Final_With_Scores")) {
+  stop("CSNT_Final_With_Scores is not present in the environment.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+# Identify grade column safely
+col_grade <- intersect(
+  c("job_grade", "job_grade.x", "Job_Grade", "Grade"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+# Support both percentile_1PL and percentile_1PL_new column names
+col_pct <- intersect(
+  c("percentile_1PL_new", "percentile_1PL", "Percentile"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+if (is.na(col_pct)) {
+  stop("Percentile column not found. Run percent_rank() step first.")
+}
+
+# Filter for target grades, Disability ('No' vs 'Yes'), and valid scores
+df_ai_prep_disability <- CSNT_Final_With_Scores %>%
+  filter(.data[[col_grade]] %in% target_grades) %>%
+  filter(disability %in% c("No", "Yes")) %>%
+  filter(!is.na(.data[[col_pct]]), !is.na(theta_1PL_new)) %>%
+  mutate(
+    Grade      = factor(.data[[col_grade]], levels = target_grades),
+    Disability = factor(disability, levels = c("No", "Yes")),
+    Percentile = round(as.numeric(.data[[col_pct]]))
+  ) %>%
+  filter(Percentile >= 1, Percentile <= 99)
+
+# ==============================================================================
+# 2. CALCULATE ADVERSE IMPACT RATIO FOR EACH PERCENTILE (1 TO 99) BY GRADE
+# Reference Group = No Disability ('No') | Focal Group = Disability ('Yes')
+# ==============================================================================
+
+# Step A: Grand totals per grade and disability status (denominators)
+total_counts_per_grade <- df_ai_prep_disability %>%
+  group_by(Grade) %>%
+  summarise(
+    Grand_Total_No  = sum(Disability == "No"),
+    Grand_Total_Yes = sum(Disability == "Yes"),
+    .groups         = "drop"
+  )
+
+# Step B: Counts and theta distribution per percentile
+pct_counts <- df_ai_prep_disability %>%
+  group_by(Grade, Percentile) %>%
+  summarise(
+    Count_No       = sum(Disability == "No"),
+    Count_Yes      = sum(Disability == "Yes"),
+    Mean_Theta_No  = mean(theta_1PL_new[Disability == "No"], na.rm = TRUE),
+    Mean_Theta_Yes = mean(theta_1PL_new[Disability == "Yes"], na.rm = TRUE),
+    SD_Theta_No    = sd(theta_1PL_new[Disability == "No"], na.rm = TRUE),
+    SD_Theta_Yes   = sd(theta_1PL_new[Disability == "Yes"], na.rm = TRUE),
+    .groups        = "drop"
+  )
+
+# Step C: Cumulative selection rates and Adverse Impact Ratios (Yes / No)
+percentile_ai_disability_summary <- pct_counts %>%
+  left_join(total_counts_per_grade, by = "Grade") %>%
+  arrange(Grade, desc(Percentile)) %>% # Descending for reverse cumulative sums
+  group_by(Grade) %>%
+  mutate(
+    # Cumulative candidates meeting or exceeding cut-off
+    Cum_Passed_No  = cumsum(Count_No),
+    Cum_Passed_Yes = cumsum(Count_Yes),
+    
+    # Cumulative Selection Rates
+    Cum_Rate_No  = Cum_Passed_No / Grand_Total_No,
+    Cum_Rate_Yes = Cum_Passed_Yes / Grand_Total_Yes,
+    
+    # AIR: Focal Group ('Yes') / Reference Group ('No')
+    Adverse_Impact_Ratio = round(Cum_Rate_Yes / ifelse(Cum_Rate_No == 0, NA, Cum_Rate_No), 4),
+    
+    # 4/5ths Rule flag (< 0.80)
+    Status_4_5ths = ifelse(Adverse_Impact_Ratio < 0.80, "ADVERSE IMPACT (< 0.80)", "PASS (>= 0.80)"),
+    
+    # Effect Size (Cohen's d: Yes - No)
+    Pooled_SD_Pct = sqrt((replace_na(SD_Theta_No, 0)^2 + replace_na(SD_Theta_Yes, 0)^2) / 2),
+    Effect_Size_d = ifelse(Pooled_SD_Pct > 0, round((Mean_Theta_Yes - Mean_Theta_No) / Pooled_SD_Pct, 4), 0)
+  ) %>%
+  arrange(Grade, Percentile) %>%
+  select(
+    Grade, Percentile, 
+    Count_No, Count_Yes,
+    Cum_Passed_No, Cum_Passed_Yes,
+    Cum_Rate_No, Cum_Rate_Yes,
+    Adverse_Impact_Ratio, Status_4_5ths,
+    Mean_Theta_No, Mean_Theta_Yes, Effect_Size_d
+  ) %>%
+  ungroup()
+
+# ==============================================================================
+# 3. VISUALIZATION: MULTI-PANEL ADVERSE IMPACT RATIO CHART BY GRADE
+# ==============================================================================
+theme_clean_report <- theme_minimal(base_size = 12) +
+  theme(
+    plot.background   = element_rect(fill = "white", color = NA),
+    panel.background  = element_rect(fill = "white", color = NA),
+    panel.grid.major  = element_line(color = "#e2e8f0", linewidth = 0.5),
+    panel.grid.minor  = element_blank(),
+    axis.text         = element_text(color = "#1e293b", size = 10),
+    axis.title        = element_text(color = "#0f172a", face = "bold"),
+    plot.title        = element_text(color = "#0f172a", face = "bold", size = 14),
+    plot.subtitle     = element_text(color = "#475569", size = 11),
+    strip.background  = element_rect(fill = "#f1f5f9", color = NA),
+    strip.text        = element_text(color = "#0f172a", face = "bold")
+  )
+
+p_disability_ai <- ggplot(percentile_ai_disability_summary, aes(x = Percentile, y = Adverse_Impact_Ratio)) +
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = 0, ymax = 0.80, 
+           fill = "#fee2e2", alpha = 0.6) +
+  geom_hline(yintercept = 0.80, linetype = "dashed", color = "#dc2626", linewidth = 0.9) +
+  geom_hline(yintercept = 1.00, linetype = "dotted", color = "#64748b", linewidth = 0.6) +
+  geom_line(color = "#0284c7", linewidth = 1.1) +
+  annotate("text", x = 18, y = 0.76, label = "4/5ths Rule (0.80)", 
+           color = "#dc2626", size = 3, fontface = "italic") +
+  facet_wrap(~ Grade, ncol = 2) +
+  scale_y_continuous(
+    limits = c(0.4, 1.4), 
+    breaks = seq(0.4, 1.4, by = 0.2),
+    labels = scales::number_format(accuracy = 0.1)
+  ) +
+  scale_x_continuous(breaks = seq(10, 90, by = 20)) +
+  labs(
+    title = "Disability Adverse Impact Ratio (AIR) by Grade Across Percentiles",
+    subtitle = "Values below the dashed red line (AIR < 0.80) indicate potential adverse impact (Disability: Yes / No)",
+    x = "Percentile Cut-off Score (Passing >= P)",
+    y = "Adverse Impact Ratio (AIR)"
+  ) +
+  theme_clean_report
+
+print(p_disability_ai)
+
+# ==============================================================================
+# 4. EXPORT TO WORKBOOK WITH SEPARATE SHEETS PER GRADE
+# ==============================================================================
+wb_disability <- createWorkbook()
+
+grade_sheet_names <- list(
+  "Administrative Officer"   = "Admin Officer",
+  "Executive Officer"        = "Exec Officer",
+  "Higher Executive Officer" = "Higher Exec Officer",
+  "Senior Executive Officer" = "Senior Exec Officer",
+  "Grade 7"                  = "Grade 7",
+  "Grade 6"                  = "Grade 6"
+)
+
+header_style <- createStyle(
+  fontColour = "#0f172a", 
+  fgFill = "#e2e8f0", 
+  textDecoration = "bold", 
+  halign = "center",
+  border = "bottom",
+  borderColour = "#94a3b8"
+)
+
+body_style <- createStyle(
+  fontColour = "#1e293b",
+  fgFill = "#ffffff",
+  halign = "left"
+)
+
+violation_style <- createStyle(
+  fontColour = "#991b1b",
+  fgFill = "#fee2e2"
+)
+
+for (grd in target_grades) {
+  sheet_name <- grade_sheet_names[[grd]]
+  addWorksheet(wb_disability, sheet_name)
+  
+  grade_data_export <- percentile_ai_disability_summary %>%
+    filter(Grade == grd) %>%
+    select(-Grade)
+  
+  writeData(wb_disability, sheet_name, grade_data_export, startRow = 1, startCol = 1)
+  
+  # Format body rows
+  addStyle(wb_disability, sheet_name, body_style, 
+           rows = 2:(nrow(grade_data_export) + 1), 
+           cols = 1:ncol(grade_data_export), 
+           gridExpand = TRUE)
+  
+  # Format header
+  addStyle(wb_disability, sheet_name, header_style, 
+           rows = 1, 
+           cols = 1:ncol(grade_data_export), 
+           gridExpand = TRUE)
+  
+  # Highlight rows with AIR < 0.80
+  violation_rows <- which(grade_data_export$Adverse_Impact_Ratio < 0.80) + 1
+  if (length(violation_rows) > 0) {
+    addStyle(wb_disability, sheet_name, violation_style, 
+             rows = violation_rows, 
+             cols = 1:ncol(grade_data_export), 
+             gridExpand = TRUE)
+  }
+  
+  setColWidths(wb_disability, sheet_name, cols = 1:ncol(grade_data_export), widths = "auto")
+}
+
+excel_disability_filename <- "CSNT_Disability_Adverse_Impact_by_Grade_2025.xlsx"
+saveWorkbook(wb_disability, excel_disability_filename, overwrite = TRUE)
+cat("\nExcel report successfully created with separate sheets:", excel_disability_filename, "\n\n")
+
+# ==============================================================================
+# 5. QUARTO SUMMARY: AI VIOLATION REPORT BY GRADE
+# ==============================================================================
+cat("## Disability Adverse Impact Summary by Grade (4/5ths Rule Evaluation)\n\n")
+
+for (grd in target_grades) {
+  cat("### Grade:", grd, "\n\n")
+  
+  grade_df <- percentile_ai_disability_summary %>% filter(Grade == grd)
+  
+  # Check for percentiles where Adverse Impact Ratio is strictly below 0.80
+  ai_violations <- grade_df %>%
+    filter(Adverse_Impact_Ratio < 0.80) %>%
+    select(
+      Percentile, 
+      Cum_Rate_No, 
+      Cum_Rate_Yes, 
+      Adverse_Impact_Ratio, 
+      Effect_Size_d
+    )
+  
+  if (nrow(ai_violations) == 0) {
+    cat("> **Result:** There is **no adverse impact** for", grd, "across any percentile cutoff (1 to 99). The Adverse Impact Ratio remains $\\ge 0.80$ at all evaluated score levels.\n\n")
+  } else {
+    pct_range <- paste0(min(ai_violations$Percentile), "th to ", max(ai_violations$Percentile), "th percentile")
+    cat("> **Result: ADVERSE IMPACT DETECTED** for", grd, "at", nrow(ai_violations), "percentile cut-off levels (spanning ", pct_range, ").\n\n")
+    
+    print(
+      kable(
+        ai_violations %>%
+          mutate(
+            Cum_Rate_No  = paste0(round(Cum_Rate_No * 100, 1), "%"),
+            Cum_Rate_Yes = paste0(round(Cum_Rate_Yes * 100, 1), "%")
+          ),
+        col.names = c("Percentile Cutoff", "No Disability Pass Rate", "Disability (Yes) Pass Rate", "AIR (Yes/No)", "Cohen's d"),
+        caption = paste("Percentiles with Adverse Impact Violations (AIR < 0.80) -", grd)
+      )
+    )
+    cat("\n\n")
+  }
+}
+```
+
+### D.3 Applicant Type
+
+```{r}
+# 1. VERIFY DATA & PREPARE DATASET (APPLICANT TYPE)
+# Reference: Internal / OGD | Focal: External | Other: Ignored
+# ==============================================================================
+if (!exists("CSNT_Final_With_Scores")) {
+  stop("CSNT_Final_With_Scores is not present in the environment.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+# Identify grade column safely
+col_grade <- intersect(
+  c("job_grade", "job_grade.x", "Job_Grade", "Grade"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+# Support both percentile_1PL and percentile_1PL_new column names
+col_pct <- intersect(
+  c("percentile_1PL_new", "percentile_1PL", "Percentile"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+if (is.na(col_pct)) {
+  stop("Percentile column not found. Run percent_rank() step first.")
+}
+
+# Classify applicant type: Internal/OGD vs External
+df_ai_prep_app_type <- CSNT_Final_With_Scores %>%
+  filter(.data[[col_grade]] %in% target_grades) %>%
+  mutate(
+    raw_app_type = as.character(application_form_applicant_type),
+    Applicant_Group = case_when(
+      grepl("^(Internal|OGD)", raw_app_type, ignore.case = TRUE) ~ "Internal / OGD",
+      grepl("^External", raw_app_type, ignore.case = TRUE)        ~ "External",
+      TRUE                                                        ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(Applicant_Group)) %>%
+  filter(!is.na(.data[[col_pct]]), !is.na(theta_1PL_new)) %>%
+  mutate(
+    Grade           = factor(.data[[col_grade]], levels = target_grades),
+    Applicant_Group = factor(Applicant_Group, levels = c("Internal / OGD", "External")),
+    Percentile      = round(as.numeric(.data[[col_pct]]))
+  ) %>%
+  filter(Percentile >= 1, Percentile <= 99)
+
+# 2. CALCULATE ADVERSE IMPACT RATIO FOR EACH PERCENTILE (1 TO 99) BY GRADE
+# Reference Group = 'Internal / OGD' | Focal Group = 'External'
+# ==============================================================================
+
+# Step A: Grand totals per grade and applicant group (denominators)
+total_counts_per_grade <- df_ai_prep_app_type %>%
+  group_by(Grade) %>%
+  summarise(
+    Grand_Total_Internal_OGD = sum(Applicant_Group == "Internal / OGD"),
+    Grand_Total_External     = sum(Applicant_Group == "External"),
+    .groups                  = "drop"
+  )
+
+# Step B: Counts and theta distribution per percentile
+pct_counts <- df_ai_prep_app_type %>%
+  group_by(Grade, Percentile) %>%
+  summarise(
+    Count_Internal_OGD      = sum(Applicant_Group == "Internal / OGD"),
+    Count_External          = sum(Applicant_Group == "External"),
+    Mean_Theta_Internal_OGD = mean(theta_1PL_new[Applicant_Group == "Internal / OGD"], na.rm = TRUE),
+    Mean_Theta_External     = mean(theta_1PL_new[Applicant_Group == "External"], na.rm = TRUE),
+    SD_Theta_Internal_OGD   = sd(theta_1PL_new[Applicant_Group == "Internal / OGD"], na.rm = TRUE),
+    SD_Theta_External       = sd(theta_1PL_new[Applicant_Group == "External"], na.rm = TRUE),
+    .groups                 = "drop"
+  )
+
+# Step C: Cumulative selection rates and Adverse Impact Ratios (External / Internal_OGD)
+percentile_ai_app_type_summary <- pct_counts %>%
+  left_join(total_counts_per_grade, by = "Grade") %>%
+  arrange(Grade, desc(Percentile)) %>% # Descending for reverse cumulative sums
+  group_by(Grade) %>%
+  mutate(
+    # Cumulative candidates meeting or exceeding cut-off
+    Cum_Passed_Internal_OGD = cumsum(Count_Internal_OGD),
+    Cum_Passed_External     = cumsum(Count_External),
+    
+    # Cumulative Selection Rates
+    Cum_Rate_Internal_OGD   = Cum_Passed_Internal_OGD / Grand_Total_Internal_OGD,
+    Cum_Rate_External       = Cum_Passed_External / Grand_Total_External,
+    
+    # AIR: Focal Group ('External') / Reference Group ('Internal / OGD')
+    Adverse_Impact_Ratio    = round(Cum_Rate_External / ifelse(Cum_Rate_Internal_OGD == 0, NA, Cum_Rate_Internal_OGD), 4),
+    
+    # 4/5ths Rule flag (< 0.80)
+    Status_4_5ths           = ifelse(Adverse_Impact_Ratio < 0.80, "ADVERSE IMPACT (< 0.80)", "PASS (>= 0.80)"),
+    
+    # Effect Size (Cohen's d: External - Internal_OGD)
+    Pooled_SD_Pct           = sqrt((replace_na(SD_Theta_Internal_OGD, 0)^2 + replace_na(SD_Theta_External, 0)^2) / 2),
+    Effect_Size_d           = ifelse(Pooled_SD_Pct > 0, round((Mean_Theta_External - Mean_Theta_Internal_OGD) / Pooled_SD_Pct, 4), 0)
+  ) %>%
+  arrange(Grade, Percentile) %>%
+  select(
+    Grade, Percentile, 
+    Count_Internal_OGD, Count_External,
+    Cum_Passed_Internal_OGD, Cum_Passed_External,
+    Cum_Rate_Internal_OGD, Cum_Rate_External,
+    Adverse_Impact_Ratio, Status_4_5ths,
+    Mean_Theta_Internal_OGD, Mean_Theta_External, Effect_Size_d
+  ) %>%
+  ungroup()
+
+# 3. VISUALIZATION: MULTI-PANEL ADVERSE IMPACT RATIO CHART BY GRADE
+# ==============================================================================
+theme_clean_report <- theme_minimal(base_size = 12) +
+  theme(
+    plot.background   = element_rect(fill = "white", color = NA),
+    panel.background  = element_rect(fill = "white", color = NA),
+    panel.grid.major  = element_line(color = "#e2e8f0", linewidth = 0.5),
+    panel.grid.minor  = element_blank(),
+    axis.text         = element_text(color = "#1e293b", size = 10),
+    axis.title        = element_text(color = "#0f172a", face = "bold"),
+    plot.title        = element_text(color = "#0f172a", face = "bold", size = 14),
+    plot.subtitle     = element_text(color = "#475569", size = 11),
+    strip.background  = element_rect(fill = "#f1f5f9", color = NA),
+    strip.text        = element_text(color = "#0f172a", face = "bold")
+  )
+
+p_app_type_ai <- ggplot(percentile_ai_app_type_summary, aes(x = Percentile, y = Adverse_Impact_Ratio)) +
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = 0, ymax = 0.80, 
+           fill = "#fee2e2", alpha = 0.6) +
+  geom_hline(yintercept = 0.80, linetype = "dashed", color = "#dc2626", linewidth = 0.9) +
+  geom_hline(yintercept = 1.00, linetype = "dotted", color = "#64748b", linewidth = 0.6) +
+  geom_line(color = "#0d9488", linewidth = 1.1) +
+  annotate("text", x = 18, y = 0.76, label = "4/5ths Rule (0.80)", 
+           color = "#dc2626", size = 3, fontface = "italic") +
+  facet_wrap(~ Grade, ncol = 2) +
+  scale_y_continuous(
+    limits = c(0.4, 1.4), 
+    breaks = seq(0.4, 1.4, by = 0.2),
+    labels = scales::number_format(accuracy = 0.1)
+  ) +
+  scale_x_continuous(breaks = seq(10, 90, by = 20)) +
+  labs(
+    title = "Applicant Type Adverse Impact Ratio (AIR) by Grade Across Percentiles",
+    subtitle = "Values below dashed red line (AIR < 0.80) indicate potential adverse impact (External / Internal & OGD)",
+    x = "Percentile Cut-off Score (Passing >= P)",
+    y = "Adverse Impact Ratio (AIR)"
+  ) +
+  theme_clean_report
+
+print(p_app_type_ai)
+
+# 4. EXPORT TO WORKBOOK WITH SEPARATE SHEETS PER GRADE
+# ==============================================================================
+wb_app_type <- createWorkbook()
+
+grade_sheet_names <- list(
+  "Administrative Officer"   = "Admin Officer",
+  "Executive Officer"        = "Exec Officer",
+  "Higher Executive Officer" = "Higher Exec Officer",
+  "Senior Executive Officer" = "Senior Exec Officer",
+  "Grade 7"                  = "Grade 7",
+  "Grade 6"                  = "Grade 6"
+)
+
+header_style <- createStyle(
+  fontColour = "#0f172a", 
+  fgFill = "#e2e8f0", 
+  textDecoration = "bold", 
+  halign = "center",
+  border = "bottom",
+  borderColour = "#94a3b8"
+)
+
+body_style <- createStyle(
+  fontColour = "#1e293b",
+  fgFill = "#ffffff",
+  halign = "left"
+)
+
+violation_style <- createStyle(
+  fontColour = "#991b1b",
+  fgFill = "#fee2e2"
+)
+
+for (grd in target_grades) {
+  sheet_name <- grade_sheet_names[[grd]]
+  addWorksheet(wb_app_type, sheet_name)
+  
+  grade_data_export <- percentile_ai_app_type_summary %>%
+    filter(Grade == grd) %>%
+    select(-Grade)
+  
+  writeData(wb_app_type, sheet_name, grade_data_export, startRow = 1, startCol = 1)
+  
+  # Format body rows
+  addStyle(wb_app_type, sheet_name, body_style, 
+           rows = 2:(nrow(grade_data_export) + 1), 
+           cols = 1:ncol(grade_data_export), 
+           gridExpand = TRUE)
+  
+  # Format header
+  addStyle(wb_app_type, sheet_name, header_style, 
+           rows = 1, 
+           cols = 1:ncol(grade_data_export), 
+           gridExpand = TRUE)
+  
+  # Highlight rows with AIR < 0.80
+  violation_rows <- which(grade_data_export$Adverse_Impact_Ratio < 0.80) + 1
+  if (length(violation_rows) > 0) {
+    addStyle(wb_app_type, sheet_name, violation_style, 
+             rows = violation_rows, 
+             cols = 1:ncol(grade_data_export), 
+             gridExpand = TRUE)
+  }
+  
+  setColWidths(wb_app_type, sheet_name, cols = 1:ncol(grade_data_export), widths = "auto")
+}
+
+excel_app_type_filename <- "CSNT_ApplicantType_Adverse_Impact_by_Grade_2025.xlsx"
+saveWorkbook(wb_app_type, excel_app_type_filename, overwrite = TRUE)
+cat("\nExcel report successfully created with separate sheets:", excel_app_type_filename, "\n\n")
+
+
+# 5. QUARTO SUMMARY: AI VIOLATION REPORT BY GRADE
+# ==============================================================================
+cat("## Applicant Type Adverse Impact Summary by Grade (4/5ths Rule Evaluation)\n\n")
+
+for (grd in target_grades) {
+  cat("### Grade:", grd, "\n\n")
+  
+  grade_df <- percentile_ai_app_type_summary %>% filter(Grade == grd)
+  
+  # Check for percentiles where Adverse Impact Ratio is strictly below 0.80
+  ai_violations <- grade_df %>%
+    filter(Adverse_Impact_Ratio < 0.80) %>%
+    select(
+      Percentile, 
+      Cum_Rate_Internal_OGD, 
+      Cum_Rate_External, 
+      Adverse_Impact_Ratio, 
+      Effect_Size_d
+    )
+  
+  if (nrow(ai_violations) == 0) {
+    cat("> **Result:** There is **no adverse impact** for", grd, "across any percentile cutoff (1 to 99). The Adverse Impact Ratio remains $\\ge 0.80$ at all evaluated score levels.\n\n")
+  } else {
+    pct_range <- paste0(min(ai_violations$Percentile), "th to ", max(ai_violations$Percentile), "th percentile")
+    cat("> **Result: ADVERSE IMPACT DETECTED** for", grd, "at", nrow(ai_violations), "percentile cut-off levels (spanning ", pct_range, ").\n\n")
+    
+    print(
+      kable(
+        ai_violations %>%
+          mutate(
+            Cum_Rate_Internal_OGD = paste0(round(Cum_Rate_Internal_OGD * 100, 1), "%"),
+            Cum_Rate_External     = paste0(round(Cum_Rate_External * 100, 1), "%")
+          ),
+        col.names = c("Percentile Cutoff", "Internal / OGD Pass Rate", "External Pass Rate", "AIR (External / Internal)", "Cohen's d"),
+        caption = paste("Percentiles with Adverse Impact Violations (AIR < 0.80) -", grd)
+      )
+    )
+    cat("\n\n")
+  }
+}
+```
+
+### D.4 Ethnicity
+
+```{r}
+# 1. VERIFY DATA & PREPARE DATASET (ETHNICITY)
+# Reference: White | Focal: Other (Asian, Black, Mixed, Other ethnic group)
+# ==============================================================================
+if (!exists("CSNT_Final_With_Scores")) {
+  stop("CSNT_Final_With_Scores is not present in the environment.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+# Identify grade column safely
+col_grade <- intersect(
+  c("job_grade", "job_grade.x", "Job_Grade", "Grade"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+# Support both percentile_1PL and percentile_1PL_new column names
+col_pct <- intersect(
+  c("percentile_1PL_new", "percentile_1PL", "Percentile"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+if (is.na(col_pct)) {
+  stop("Percentile column not found. Run percent_rank() step first.")
+}
+
+if (!"select_your_ethnic_group" %in% colnames(CSNT_Final_With_Scores)) {
+  stop("Column 'select_your_ethnic_group' not found in CSNT_Final_With_Scores.")
+}
+
+# Define categories to combine into the 'Other' focal group
+focal_ethnicities <- c(
+  "Asian / Asian British",
+  "Black / African / Caribbean / Black British",
+  "Mixed / multiple ethnic groups",
+  "Other ethnic group"
+)
+
+# Classify ethnicity: White vs Other (all non-white specified groups)
+df_ai_prep_ethnicity <- CSNT_Final_With_Scores %>%
+  filter(.data[[col_grade]] %in% target_grades) %>%
+  mutate(
+    raw_ethnic_group = trimws(as.character(select_your_ethnic_group)),
+    Ethnicity_Group = case_when(
+      grepl("^White", raw_ethnic_group, ignore.case = TRUE)  ~ "White",
+      raw_ethnic_group %in% focal_ethnicities                ~ "Other",
+      TRUE                                                   ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(Ethnicity_Group)) %>%
+  filter(!is.na(.data[[col_pct]]), !is.na(theta_1PL_new)) %>%
+  mutate(
+    Grade           = factor(.data[[col_grade]], levels = target_grades),
+    Ethnicity_Group = factor(Ethnicity_Group, levels = c("White", "Other")),
+    Percentile      = round(as.numeric(.data[[col_pct]]))
+  ) %>%
+  filter(Percentile >= 1, Percentile <= 99)
+
+# ==============================================================================
+# 2. CALCULATE ADVERSE IMPACT RATIO FOR EACH PERCENTILE (1 TO 99) BY GRADE
+# Reference Group = 'White' | Focal Group = 'Other'
+# ==============================================================================
+
+# Step A: Grand totals per grade and ethnic group (denominators)
+total_counts_per_grade <- df_ai_prep_ethnicity %>%
+  group_by(Grade) %>%
+  summarise(
+    Grand_Total_White = sum(Ethnicity_Group == "White"),
+    Grand_Total_Other = sum(Ethnicity_Group == "Other"),
+    .groups           = "drop"
+  )
+
+# Step B: Counts and theta distribution per percentile
+pct_counts <- df_ai_prep_ethnicity %>%
+  group_by(Grade, Percentile) %>%
+  summarise(
+    Count_White       = sum(Ethnicity_Group == "White"),
+    Count_Other       = sum(Ethnicity_Group == "Other"),
+    Mean_Theta_White  = mean(theta_1PL_new[Ethnicity_Group == "White"], na.rm = TRUE),
+    Mean_Theta_Other  = mean(theta_1PL_new[Ethnicity_Group == "Other"], na.rm = TRUE),
+    SD_Theta_White    = sd(theta_1PL_new[Ethnicity_Group == "White"], na.rm = TRUE),
+    SD_Theta_Other    = sd(theta_1PL_new[Ethnicity_Group == "Other"], na.rm = TRUE),
+    .groups           = "drop"
+  )
+
+# Step C: Cumulative selection rates and Adverse Impact Ratios (Other / White)
+percentile_ai_ethnicity_summary <- pct_counts %>%
+  left_join(total_counts_per_grade, by = "Grade") %>%
+  arrange(Grade, desc(Percentile)) %>% # Descending for reverse cumulative sums
+  group_by(Grade) %>%
+  mutate(
+    # Cumulative candidates meeting or exceeding cut-off
+    Cum_Passed_White     = cumsum(Count_White),
+    Cum_Passed_Other     = cumsum(Count_Other),
+    
+    # Cumulative Selection Rates
+    Cum_Rate_White       = Cum_Passed_White / Grand_Total_White,
+    Cum_Rate_Other       = Cum_Passed_Other / Grand_Total_Other,
+    
+    # AIR: Focal Group ('Other') / Reference Group ('White')
+    Adverse_Impact_Ratio = round(Cum_Rate_Other / ifelse(Cum_Rate_White == 0, NA, Cum_Rate_White), 4),
+    
+    # 4/5ths Rule flag (< 0.80)
+    Status_4_5ths        = ifelse(Adverse_Impact_Ratio < 0.80, "ADVERSE IMPACT (< 0.80)", "PASS (>= 0.80)"),
+    
+    # Effect Size (Cohen's d: Other - White)
+    Pooled_SD_Pct        = sqrt((replace_na(SD_Theta_White, 0)^2 + replace_na(SD_Theta_Other, 0)^2) / 2),
+    Effect_Size_d        = ifelse(Pooled_SD_Pct > 0, round((Mean_Theta_Other - Mean_Theta_White) / Pooled_SD_Pct, 4), 0)
+  ) %>%
+  arrange(Grade, Percentile) %>%
+  select(
+    Grade, Percentile, 
+    Count_White, Count_Other,
+    Cum_Passed_White, Cum_Passed_Other,
+    Cum_Rate_White, Cum_Rate_Other,
+    Adverse_Impact_Ratio, Status_4_5ths,
+    Mean_Theta_White, Mean_Theta_Other, Effect_Size_d
+  ) %>%
+  ungroup()
+
+# ==============================================================================
+# 3. VISUALIZATION: MULTI-PANEL ADVERSE IMPACT RATIO CHART BY GRADE
+# ==============================================================================
+theme_clean_report <- theme_minimal(base_size = 12) +
+  theme(
+    plot.background   = element_rect(fill = "white", color = NA),
+    panel.background  = element_rect(fill = "white", color = NA),
+    panel.grid.major  = element_line(color = "#e2e8f0", linewidth = 0.5),
+    panel.grid.minor  = element_blank(),
+    axis.text         = element_text(color = "#1e293b", size = 10),
+    axis.title        = element_text(color = "#0f172a", face = "bold"),
+    plot.title        = element_text(color = "#0f172a", face = "bold", size = 14),
+    plot.subtitle     = element_text(color = "#475569", size = 11),
+    strip.background  = element_rect(fill = "#f1f5f9", color = NA),
+    strip.text        = element_text(color = "#0f172a", face = "bold")
+  )
+
+p_ethnicity_ai <- ggplot(percentile_ai_ethnicity_summary, aes(x = Percentile, y = Adverse_Impact_Ratio)) +
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = 0, ymax = 0.80, 
+           fill = "#fee2e2", alpha = 0.6) +
+  geom_hline(yintercept = 0.80, linetype = "dashed", color = "#dc2626", linewidth = 0.9) +
+  geom_hline(yintercept = 1.00, linetype = "dotted", color = "#64748b", linewidth = 0.6) +
+  geom_line(color = "#7c3aed", linewidth = 1.1) +
+  annotate("text", x = 18, y = 0.76, label = "4/5ths Rule (0.80)", 
+           color = "#dc2626", size = 3, fontface = "italic") +
+  facet_wrap(~ Grade, ncol = 2) +
+  scale_y_continuous(
+    limits = c(0.4, 1.4), 
+    breaks = seq(0.4, 1.4, by = 0.2),
+    labels = scales::number_format(accuracy = 0.1)
+  ) +
+  scale_x_continuous(breaks = seq(10, 90, by = 20)) +
+  labs(
+    title = "Ethnicity Adverse Impact Ratio (AIR) by Grade Across Percentiles",
+    subtitle = "Values below dashed red line (AIR < 0.80) indicate potential adverse impact (Other / White)",
+    x = "Percentile Cut-off Score (Passing >= P)",
+    y = "Adverse Impact Ratio (AIR)"
+  ) +
+  theme_clean_report
+
+print(p_ethnicity_ai)
+
+# ==============================================================================
+# 4. EXPORT TO WORKBOOK WITH SEPARATE SHEETS PER GRADE
+# ==============================================================================
+wb_ethnicity <- createWorkbook()
+
+grade_sheet_names <- list(
+  "Administrative Officer"   = "Admin Officer",
+  "Executive Officer"        = "Exec Officer",
+  "Higher Executive Officer" = "Higher Exec Officer",
+  "Senior Executive Officer" = "Senior Exec Officer",
+  "Grade 7"                  = "Grade 7",
+  "Grade 6"                  = "Grade 6"
+)
+
+header_style <- createStyle(
+  fontColour = "#0f172a", 
+  fgFill = "#e2e8f0", 
+  textDecoration = "bold", 
+  halign = "center",
+  border = "bottom",
+  borderColour = "#94a3b8"
+)
+
+body_style <- createStyle(
+  fontColour = "#1e293b",
+  fgFill = "#ffffff",
+  halign = "left"
+)
+
+violation_style <- createStyle(
+  fontColour = "#991b1b",
+  fgFill = "#fee2e2"
+)
+
+for (grd in target_grades) {
+  sheet_name <- grade_sheet_names[[grd]]
+  addWorksheet(wb_ethnicity, sheet_name)
+  
+  grade_data_export <- percentile_ai_ethnicity_summary %>%
+    filter(Grade == grd) %>%
+    select(-Grade)
+  
+  writeData(wb_ethnicity, sheet_name, grade_data_export, startRow = 1, startCol = 1)
+  
+  # Format body rows
+  addStyle(wb_ethnicity, sheet_name, body_style, 
+           rows = 2:(nrow(grade_data_export) + 1), 
+           cols = 1:ncol(grade_data_export), 
+           gridExpand = TRUE)
+  
+  # Format header
+  addStyle(wb_ethnicity, sheet_name, header_style, 
+           rows = 1, 
+           cols = 1:ncol(grade_data_export), 
+           gridExpand = TRUE)
+  
+  # Highlight rows with AIR < 0.80
+  violation_rows <- which(grade_data_export$Adverse_Impact_Ratio < 0.80) + 1
+  if (length(violation_rows) > 0) {
+    addStyle(wb_ethnicity, sheet_name, violation_style, 
+             rows = violation_rows, 
+             cols = 1:ncol(grade_data_export), 
+             gridExpand = TRUE)
+  }
+  
+  setColWidths(wb_ethnicity, sheet_name, cols = 1:ncol(grade_data_export), widths = "auto")
+}
+
+excel_ethnicity_filename <- "CSNT_Ethnicity_Adverse_Impact_by_Grade_2025.xlsx"
+saveWorkbook(wb_ethnicity, excel_ethnicity_filename, overwrite = TRUE)
+cat("\nExcel report successfully created with separate sheets:", excel_ethnicity_filename, "\n\n")
+
+# ==============================================================================
+# 5. QUARTO SUMMARY: AI VIOLATION REPORT BY GRADE
+# ==============================================================================
+cat("## Ethnicity Adverse Impact Summary by Grade (4/5ths Rule Evaluation)\n\n")
+
+for (grd in target_grades) {
+  cat("### Grade:", grd, "\n\n")
+  
+  grade_df <- percentile_ai_ethnicity_summary %>% filter(Grade == grd)
+  
+  # Check for percentiles where Adverse Impact Ratio is strictly below 0.80
+  ai_violations <- grade_df %>%
+    filter(Adverse_Impact_Ratio < 0.80) %>%
+    select(
+      Percentile, 
+      Cum_Rate_White, 
+      Cum_Rate_Other, 
+      Adverse_Impact_Ratio, 
+      Effect_Size_d
+    )
+  
+  if (nrow(ai_violations) == 0) {
+    cat("> **Result:** There is **no adverse impact** for", grd, "across any percentile cutoff (1 to 99). The Adverse Impact Ratio remains $\\ge 0.80$ at all evaluated score levels.\n\n")
+  } else {
+    pct_range <- paste0(min(ai_violations$Percentile), "th to ", max(ai_violations$Percentile), "th percentile")
+    cat("> **Result: ADVERSE IMPACT DETECTED** for", grd, "at", nrow(ai_violations), "percentile cut-off levels (spanning ", pct_range, ").\n\n")
+    
+    print(
+      kable(
+        ai_violations %>%
+          mutate(
+            Cum_Rate_White = paste0(round(Cum_Rate_White * 100, 1), "%"),
+            Cum_Rate_Other = paste0(round(Cum_Rate_Other * 100, 1), "%")
+          ),
+        col.names = c("Percentile Cutoff", "White Pass Rate", "Other Ethnic Group Pass Rate", "AIR (Other / White)", "Cohen's d"),
+        caption = paste("Percentiles with Adverse Impact Violations (AIR < 0.80) -", grd)
+      )
+    )
+    cat("\n\n")
+  }
+}
+```
+
+### D.5 Sexual Orientation
+
+```{r}
+# 1. VERIFY DATA & PREPARE DATASET (SEXUAL ORIENTATION)
+# Reference: Heterosexual or straight | Focal: Other (Bisexual, Gay or lesbian, Prefer to self-describe)
+# ==============================================================================
+if (!exists("CSNT_Final_With_Scores")) {
+  stop("CSNT_Final_With_Scores is not present in the environment.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+# Identify grade column safely
+col_grade <- intersect(
+  c("job_grade", "job_grade.x", "Job_Grade", "Grade"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+# Support both percentile_1PL and percentile_1PL_new column names
+col_pct <- intersect(
+  c("percentile_1PL_new", "percentile_1PL", "Percentile"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+if (is.na(col_pct)) {
+  stop("Percentile column not found. Run percent_rank() step first.")
+}
+
+if (!"what_is_your_sexual_orientation" %in% colnames(CSNT_Final_With_Scores)) {
+  stop("Column 'what_is_your_sexual_orientation' not found in CSNT_Final_With_Scores.")
+}
+
+# Define categories to combine into the 'Other' focal group
+focal_orientations <- c(
+  "Bisexual",
+  "Gay or lesbian",
+  "Prefer to self-describe"
+)
+
+# Classify sexual orientation: Heterosexual or straight vs Other
+df_ai_prep_orientation <- CSNT_Final_With_Scores %>%
+  filter(.data[[col_grade]] %in% target_grades) %>%
+  mutate(
+    raw_orientation = trimws(as.character(what_is_your_sexual_orientation)),
+    Orientation_Group = case_when(
+      grepl("^Heterosexual or straight", raw_orientation, ignore.case = TRUE) ~ "Heterosexual or straight",
+      raw_orientation %in% focal_orientations                                 ~ "Other",
+      TRUE                                                                    ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(Orientation_Group)) %>%
+  filter(!is.na(.data[[col_pct]]), !is.na(theta_1PL_new)) %>%
+  mutate(
+    Grade             = factor(.data[[col_grade]], levels = target_grades),
+    Orientation_Group = factor(Orientation_Group, levels = c("Heterosexual or straight", "Other")),
+    Percentile        = round(as.numeric(.data[[col_pct]]))
+  ) %>%
+  filter(Percentile >= 1, Percentile <= 99)
+
+# ==============================================================================
+# 2. CALCULATE ADVERSE IMPACT RATIO FOR EACH PERCENTILE (1 TO 99) BY GRADE
+# Reference Group = 'Heterosexual or straight' | Focal Group = 'Other'
+# ==============================================================================
+
+# Step A: Grand totals per grade and sexual orientation group (denominators)
+total_counts_per_grade <- df_ai_prep_orientation %>%
+  group_by(Grade) %>%
+  summarise(
+    Grand_Total_Hetero = sum(Orientation_Group == "Heterosexual or straight"),
+    Grand_Total_Other  = sum(Orientation_Group == "Other"),
+    .groups            = "drop"
+  )
+
+# Step B: Counts and theta distribution per percentile
+pct_counts <- df_ai_prep_orientation %>%
+  group_by(Grade, Percentile) %>%
+  summarise(
+    Count_Hetero       = sum(Orientation_Group == "Heterosexual or straight"),
+    Count_Other        = sum(Orientation_Group == "Other"),
+    Mean_Theta_Hetero  = mean(theta_1PL_new[Orientation_Group == "Heterosexual or straight"], na.rm = TRUE),
+    Mean_Theta_Other   = mean(theta_1PL_new[Orientation_Group == "Other"], na.rm = TRUE),
+    SD_Theta_Hetero    = sd(theta_1PL_new[Orientation_Group == "Heterosexual or straight"], na.rm = TRUE),
+    SD_Theta_Other     = sd(theta_1PL_new[Orientation_Group == "Other"], na.rm = TRUE),
+    .groups            = "drop"
+  )
+
+# Step C: Cumulative selection rates and Adverse Impact Ratios (Other / Heterosexual)
+percentile_ai_orientation_summary <- pct_counts %>%
+  left_join(total_counts_per_grade, by = "Grade") %>%
+  arrange(Grade, desc(Percentile)) %>% # Descending for reverse cumulative sums
+  group_by(Grade) %>%
+  mutate(
+    # Cumulative candidates meeting or exceeding cut-off
+    Cum_Passed_Hetero    = cumsum(Count_Hetero),
+    Cum_Passed_Other     = cumsum(Count_Other),
+    
+    # Cumulative Selection Rates
+    Cum_Rate_Hetero      = Cum_Passed_Hetero / Grand_Total_Hetero,
+    Cum_Rate_Other       = Cum_Passed_Other / Grand_Total_Other,
+    
+    # AIR: Focal Group ('Other') / Reference Group ('Heterosexual or straight')
+    Adverse_Impact_Ratio = round(Cum_Rate_Other / ifelse(Cum_Rate_Hetero == 0, NA, Cum_Rate_Hetero), 4),
+    
+    # 4/5ths Rule flag (< 0.80)
+    Status_4_5ths        = ifelse(Adverse_Impact_Ratio < 0.80, "ADVERSE IMPACT (< 0.80)", "PASS (>= 0.80)"),
+    
+    # Effect Size (Cohen's d: Other - Heterosexual)
+    Pooled_SD_Pct        = sqrt((replace_na(SD_Theta_Hetero, 0)^2 + replace_na(SD_Theta_Other, 0)^2) / 2),
+    Effect_Size_d        = ifelse(Pooled_SD_Pct > 0, round((Mean_Theta_Other - Mean_Theta_Hetero) / Pooled_SD_Pct, 4), 0)
+  ) %>%
+  arrange(Grade, Percentile) %>%
+  select(
+    Grade, Percentile, 
+    Count_Hetero, Count_Other,
+    Cum_Passed_Hetero, Cum_Passed_Other,
+    Cum_Rate_Hetero, Cum_Rate_Other,
+    Adverse_Impact_Ratio, Status_4_5ths,
+    Mean_Theta_Hetero, Mean_Theta_Other, Effect_Size_d
+  ) %>%
+  ungroup()
+
+# ==============================================================================
+# 3. VISUALIZATION: MULTI-PANEL ADVERSE IMPACT RATIO CHART BY GRADE
+# ==============================================================================
+theme_clean_report <- theme_minimal(base_size = 12) +
+  theme(
+    plot.background   = element_rect(fill = "white", color = NA),
+    panel.background  = element_rect(fill = "white", color = NA),
+    panel.grid.major  = element_line(color = "#e2e8f0", linewidth = 0.5),
+    panel.grid.minor  = element_blank(),
+    axis.text         = element_text(color = "#1e293b", size = 10),
+    axis.title        = element_text(color = "#0f172a", face = "bold"),
+    plot.title        = element_text(color = "#0f172a", face = "bold", size = 14),
+    plot.subtitle     = element_text(color = "#475569", size = 11),
+    strip.background  = element_rect(fill = "#f1f5f9", color = NA),
+    strip.text        = element_text(color = "#0f172a", face = "bold")
+  )
+
+p_orientation_ai <- ggplot(percentile_ai_orientation_summary, aes(x = Percentile, y = Adverse_Impact_Ratio)) +
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = 0, ymax = 0.80, 
+           fill = "#fee2e2", alpha = 0.6) +
+  geom_hline(yintercept = 0.80, linetype = "dashed", color = "#dc2626", linewidth = 0.9) +
+  geom_hline(yintercept = 1.00, linetype = "dotted", color = "#64748b", linewidth = 0.6) +
+  geom_line(color = "#d97706", linewidth = 1.1) +
+  annotate("text", x = 18, y = 0.76, label = "4/5ths Rule (0.80)", 
+           color = "#dc2626", size = 3, fontface = "italic") +
+  facet_wrap(~ Grade, ncol = 2) +
+  scale_y_continuous(
+    limits = c(0.4, 1.4), 
+    breaks = seq(0.4, 1.4, by = 0.2),
+    labels = scales::number_format(accuracy = 0.1)
+  ) +
+  scale_x_continuous(breaks = seq(10, 90, by = 20)) +
+  labs(
+    title = "Sexual Orientation Adverse Impact Ratio (AIR) by Grade Across Percentiles",
+    subtitle = "Values below dashed red line (AIR < 0.80) indicate potential adverse impact (Other / Heterosexual or straight)",
+    x = "Percentile Cut-off Score (Passing >= P)",
+    y = "Adverse Impact Ratio (AIR)"
+  ) +
+  theme_clean_report
+
+print(p_orientation_ai)
+
+# ==============================================================================
+# 4. EXPORT TO WORKBOOK WITH SEPARATE SHEETS PER GRADE
+# ==============================================================================
+wb_orientation <- createWorkbook()
+
+grade_sheet_names <- list(
+  "Administrative Officer"   = "Admin Officer",
+  "Executive Officer"        = "Exec Officer",
+  "Higher Executive Officer" = "Higher Exec Officer",
+  "Senior Executive Officer" = "Senior Exec Officer",
+  "Grade 7"                  = "Grade 7",
+  "Grade 6"                  = "Grade 6"
+)
+
+header_style <- createStyle(
+  fontColour = "#0f172a", 
+  fgFill = "#e2e8f0", 
+  textDecoration = "bold", 
+  halign = "center",
+  border = "bottom",
+  borderColour = "#94a3b8"
+)
+
+body_style <- createStyle(
+  fontColour = "#1e293b",
+  fgFill = "#ffffff",
+  halign = "left"
+)
+
+violation_style <- createStyle(
+  fontColour = "#991b1b",
+  fgFill = "#fee2e2"
+)
+
+for (grd in target_grades) {
+  sheet_name <- grade_sheet_names[[grd]]
+  addWorksheet(wb_orientation, sheet_name)
+  
+  grade_data_export <- percentile_ai_orientation_summary %>%
+    filter(Grade == grd) %>%
+    select(-Grade)
+  
+  writeData(wb_orientation, sheet_name, grade_data_export, startRow = 1, startCol = 1)
+  
+  # Format body rows
+  addStyle(wb_orientation, sheet_name, body_style, 
+           rows = 2:(nrow(grade_data_export) + 1), 
+           cols = 1:ncol(grade_data_export), 
+           gridExpand = TRUE)
+  
+  # Format header
+  addStyle(wb_orientation, sheet_name, header_style, 
+           rows = 1, 
+           cols = 1:ncol(grade_data_export), 
+           gridExpand = TRUE)
+  
+  # Highlight rows with AIR < 0.80
+  violation_rows <- which(grade_data_export$Adverse_Impact_Ratio < 0.80) + 1
+  if (length(violation_rows) > 0) {
+    addStyle(wb_orientation, sheet_name, violation_style, 
+             rows = violation_rows, 
+             cols = 1:ncol(grade_data_export), 
+             gridExpand = TRUE)
+  }
+  
+  setColWidths(wb_orientation, sheet_name, cols = 1:ncol(grade_data_export), widths = "auto")
+}
+
+excel_orientation_filename <- "CSNT_SexualOrientation_Adverse_Impact_by_Grade_2025.xlsx"
+saveWorkbook(wb_orientation, excel_orientation_filename, overwrite = TRUE)
+cat("\nExcel report successfully created with separate sheets:", excel_orientation_filename, "\n\n")
+
+# ==============================================================================
+# 5. QUARTO SUMMARY: AI VIOLATION REPORT BY GRADE
+# ==============================================================================
+cat("## Sexual Orientation Adverse Impact Summary by Grade (4/5ths Rule Evaluation)\n\n")
+
+for (grd in target_grades) {
+  cat("### Grade:", grd, "\n\n")
+  
+  grade_df <- percentile_ai_orientation_summary %>% filter(Grade == grd)
+  
+  # Check for percentiles where Adverse Impact Ratio is strictly below 0.80
+  ai_violations <- grade_df %>%
+    filter(Adverse_Impact_Ratio < 0.80) %>%
+    select(
+      Percentile, 
+      Cum_Rate_Hetero, 
+      Cum_Rate_Other, 
+      Adverse_Impact_Ratio, 
+      Effect_Size_d
+    )
+  
+  if (nrow(ai_violations) == 0) {
+    cat("> **Result:** There is **no adverse impact** for", grd, "across any percentile cutoff (1 to 99). The Adverse Impact Ratio remains $\\ge 0.80$ at all evaluated score levels.\n\n")
+  } else {
+    pct_range <- paste0(min(ai_violations$Percentile), "th to ", max(ai_violations$Percentile), "th percentile")
+    cat("> **Result: ADVERSE IMPACT DETECTED** for", grd, "at", nrow(ai_violations), "percentile cut-off levels (spanning ", pct_range, ").\n\n")
+    
+    print(
+      kable(
+        ai_violations %>%
+          mutate(
+            Cum_Rate_Hetero = paste0(round(Cum_Rate_Hetero * 100, 1), "%"),
+            Cum_Rate_Other  = paste0(round(Cum_Rate_Other * 100, 1), "%")
+          ),
+        col.names = c("Percentile Cutoff", "Heterosexual Pass Rate", "LGB+ (Other) Pass Rate", "AIR (Other / Hetero)", "Cohen's d"),
+        caption = paste("Percentiles with Adverse Impact Violations (AIR < 0.80) -", grd)
+      )
+    )
+    cat("\n\n")
+  }
+}
+```
+
+### D.6 Age
+
+```{r}
+# 1. VERIFY DATA & PREPARE DATASET (AGE GROUP)
+# Reference: 'Under 40' (16-24|25-29|30-34|35-39)
+# Focal:     '40 and Higher' (40-44|45-49|50-54|55-59|60-64|65+)
+# ==============================================================================
+if (!exists("CSNT_Final_With_Scores")) {
+  stop("CSNT_Final_With_Scores is not present in the environment.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+# Identify grade column safely
+col_grade <- intersect(
+  c("job_grade", "job_grade.x", "Job_Grade", "Grade"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+# Support both percentile_1PL and percentile_1PL_new column names
+col_pct <- intersect(
+  c("percentile_1PL_new", "percentile_1PL", "Percentile"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+if (is.na(col_pct)) {
+  stop("Percentile column not found. Run percent_rank() step first.")
+}
+
+if (!"select_your_current_age_group" %in% colnames(CSNT_Final_With_Scores)) {
+  stop("Column 'select_your_current_age_group' not found in CSNT_Final_With_Scores.")
+}
+
+# Regex patterns matching exact specified age groupings
+pattern_under_40 <- "16-24|25-29|30-34|35-39"
+pattern_40_plus  <- "40-44|45-49|50-54|55-59|60-64|65\\+"
+
+# Classify age groups and filter
+df_ai_prep_age <- CSNT_Final_With_Scores %>%
+  filter(.data[[col_grade]] %in% target_grades) %>%
+  mutate(
+    raw_age = trimws(as.character(select_your_current_age_group)),
+    Age_Group = case_when(
+      grepl(pattern_under_40, raw_age) ~ "Under 40",
+      grepl(pattern_40_plus, raw_age)  ~ "40 and Higher",
+      TRUE                             ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(Age_Group)) %>%
+  filter(!is.na(.data[[col_pct]]), !is.na(theta_1PL_new)) %>%
+  mutate(
+    Grade      = factor(.data[[col_grade]], levels = target_grades),
+    Age_Group  = factor(Age_Group, levels = c("Under 40", "40 and Higher")),
+    Percentile = round(as.numeric(.data[[col_pct]]))
+  ) %>%
+  filter(Percentile >= 1, Percentile <= 99)
+
+# ==============================================================================
+# 2. CALCULATE ADVERSE IMPACT RATIO FOR EACH PERCENTILE (1 TO 99) BY GRADE
+# Reference Group = 'Under 40' | Focal Group = '40 and Higher'
+# ==============================================================================
+
+# Step A: Grand totals per grade and age group (denominators)
+total_counts_per_grade <- df_ai_prep_age %>%
+  group_by(Grade) %>%
+  summarise(
+    Grand_Total_Under40 = sum(Age_Group == "Under 40"),
+    Grand_Total_40Plus  = sum(Age_Group == "40 and Higher"),
+    .groups             = "drop"
+  )
+
+# Step B: Counts and theta distribution per percentile
+pct_counts <- df_ai_prep_age %>%
+  group_by(Grade, Percentile) %>%
+  summarise(
+    Count_Under40       = sum(Age_Group == "Under 40"),
+    Count_40Plus        = sum(Age_Group == "40 and Higher"),
+    Mean_Theta_Under40  = mean(theta_1PL_new[Age_Group == "Under 40"], na.rm = TRUE),
+    Mean_Theta_40Plus   = mean(theta_1PL_new[Age_Group == "40 and Higher"], na.rm = TRUE),
+    SD_Theta_Under40    = sd(theta_1PL_new[Age_Group == "Under 40"], na.rm = TRUE),
+    SD_Theta_40Plus     = sd(theta_1PL_new[Age_Group == "40 and Higher"], na.rm = TRUE),
+    .groups             = "drop"
+  )
+
+# Step C: Cumulative selection rates and Adverse Impact Ratios (40 and Higher / Under 40)
+percentile_ai_age_summary <- pct_counts %>%
+  left_join(total_counts_per_grade, by = "Grade") %>%
+  arrange(Grade, desc(Percentile)) %>% # Descending for reverse cumulative sums
+  group_by(Grade) %>%
+  mutate(
+    # Cumulative candidates meeting or exceeding cut-off
+    Cum_Passed_Under40   = cumsum(Count_Under40),
+    Cum_Passed_40Plus    = cumsum(Count_40Plus),
+    
+    # Cumulative Selection Rates
+    Cum_Rate_Under40     = Cum_Passed_Under40 / Grand_Total_Under40,
+    Cum_Rate_40Plus      = Cum_Passed_40Plus / Grand_Total_40Plus,
+    
+    # AIR: Focal Group ('40 and Higher') / Reference Group ('Under 40')
+    Adverse_Impact_Ratio = round(Cum_Rate_40Plus / ifelse(Cum_Rate_Under40 == 0, NA, Cum_Rate_Under40), 4),
+    
+    # 4/5ths Rule flag (< 0.80)
+    Status_4_5ths        = ifelse(Adverse_Impact_Ratio < 0.80, "ADVERSE IMPACT (< 0.80)", "PASS (>= 0.80)"),
+    
+    # Effect Size (Cohen's d: 40 and Higher - Under 40)
+    Pooled_SD_Pct        = sqrt((replace_na(SD_Theta_Under40, 0)^2 + replace_na(SD_Theta_40Plus, 0)^2) / 2),
+    Effect_Size_d        = ifelse(Pooled_SD_Pct > 0, round((Mean_Theta_40Plus - Mean_Theta_Under40) / Pooled_SD_Pct, 4), 0)
+  ) %>%
+  arrange(Grade, Percentile) %>%
+  select(
+    Grade, Percentile, 
+    Count_Under40, Count_40Plus,
+    Cum_Passed_Under40, Cum_Passed_40Plus,
+    Cum_Rate_Under40, Cum_Rate_40Plus,
+    Adverse_Impact_Ratio, Status_4_5ths,
+    Mean_Theta_Under40, Mean_Theta_40Plus, Effect_Size_d
+  ) %>%
+  ungroup()
+
+# ==============================================================================
+# 3. VISUALIZATION: MULTI-PANEL ADVERSE IMPACT RATIO CHART BY GRADE
+# ==============================================================================
+theme_clean_report <- theme_minimal(base_size = 12) +
+  theme(
+    plot.background   = element_rect(fill = "white", color = NA),
+    panel.background  = element_rect(fill = "white", color = NA),
+    panel.grid.major  = element_line(color = "#e2e8f0", linewidth = 0.5),
+    panel.grid.minor  = element_blank(),
+    axis.text         = element_text(color = "#1e293b", size = 10),
+    axis.title        = element_text(color = "#0f172a", face = "bold"),
+    plot.title        = element_text(color = "#0f172a", face = "bold", size = 14),
+    plot.subtitle     = element_text(color = "#475569", size = 11),
+    strip.background  = element_rect(fill = "#f1f5f9", color = NA),
+    strip.text        = element_text(color = "#0f172a", face = "bold")
+  )
+
+p_age_ai <- ggplot(percentile_ai_age_summary, aes(x = Percentile, y = Adverse_Impact_Ratio)) +
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = 0, ymax = 0.80, 
+           fill = "#fee2e2", alpha = 0.6) +
+  geom_hline(yintercept = 0.80, linetype = "dashed", color = "#dc2626", linewidth = 0.9) +
+  geom_hline(yintercept = 1.00, linetype = "dotted", color = "#64748b", linewidth = 0.6) +
+  geom_line(color = "#9333ea", linewidth = 1.1) +
+  annotate("text", x = 18, y = 0.76, label = "4/5ths Rule (0.80)", 
+           color = "#dc2626", size = 3, fontface = "italic") +
+  facet_wrap(~ Grade, ncol = 2) +
+  scale_y_continuous(
+    limits = c(0.4, 1.4), 
+    breaks = seq(0.4, 1.4, by = 0.2),
+    labels = scales::number_format(accuracy = 0.1)
+  ) +
+  scale_x_continuous(breaks = seq(10, 90, by = 20)) +
+  labs(
+    title = "Age Adverse Impact Ratio (AIR) by Grade Across Percentiles",
+    subtitle = "Values below dashed red line (AIR < 0.80) indicate potential adverse impact (40 and Higher / Under 40)",
+    x = "Percentile Cut-off Score (Passing >= P)",
+    y = "Adverse Impact Ratio (AIR)"
+  ) +
+  theme_clean_report
+
+print(p_age_ai)
+
+# ==============================================================================
+# 4. EXPORT TO WORKBOOK WITH SEPARATE SHEETS PER GRADE
+# ==============================================================================
+wb_age <- createWorkbook()
+
+grade_sheet_names <- list(
+  "Administrative Officer"   = "Admin Officer",
+  "Executive Officer"        = "Exec Officer",
+  "Higher Executive Officer" = "Higher Exec Officer",
+  "Senior Executive Officer" = "Senior Exec Officer",
+  "Grade 7"                  = "Grade 7",
+  "Grade 6"                  = "Grade 6"
+)
+
+header_style <- createStyle(
+  fontColour = "#0f172a", 
+  fgFill = "#e2e8f0", 
+  textDecoration = "bold", 
+  halign = "center",
+  border = "bottom",
+  borderColour = "#94a3b8"
+)
+
+body_style <- createStyle(
+  fontColour = "#1e293b",
+  fgFill = "#ffffff",
+  halign = "left"
+)
+
+violation_style <- createStyle(
+  fontColour = "#991b1b",
+  fgFill = "#fee2e2"
+)
+
+for (grd in target_grades) {
+  sheet_name <- grade_sheet_names[[grd]]
+  addWorksheet(wb_age, sheet_name)
+  
+  grade_data_export <- percentile_ai_age_summary %>%
+    filter(Grade == grd) %>%
+    select(-Grade)
+  
+  writeData(wb_age, sheet_name, grade_data_export, startRow = 1, startCol = 1)
+  
+  # Format body rows
+  addStyle(wb_age, sheet_name, body_style, 
+           rows = 2:(nrow(grade_data_export) + 1), 
+           cols = 1:ncol(grade_data_export), 
+           gridExpand = TRUE)
+  
+  # Format header
+  addStyle(wb_age, sheet_name, header_style, 
+           rows = 1, 
+           cols = 1:ncol(grade_data_export), 
+           gridExpand = TRUE)
+  
+  # Highlight rows with AIR < 0.80
+  violation_rows <- which(grade_data_export$Adverse_Impact_Ratio < 0.80) + 1
+  if (length(violation_rows) > 0) {
+    addStyle(wb_age, sheet_name, violation_style, 
+             rows = violation_rows, 
+             cols = 1:ncol(grade_data_export), 
+             gridExpand = TRUE)
+  }
+  
+  setColWidths(wb_age, sheet_name, cols = 1:ncol(grade_data_export), widths = "auto")
+}
+
+excel_age_filename <- "CSNT_Age_Adverse_Impact_by_Grade_2025.xlsx"
+saveWorkbook(wb_age, excel_age_filename, overwrite = TRUE)
+cat("\nExcel report successfully created with separate sheets:", excel_age_filename, "\n\n")
+
+# ==============================================================================
+# 5. QUARTO SUMMARY: AI VIOLATION REPORT BY GRADE
+# ==============================================================================
+cat("## Age Adverse Impact Summary by Grade (4/5ths Rule Evaluation)\n\n")
+
+for (grd in target_grades) {
+  cat("### Grade:", grd, "\n\n")
+  
+  grade_df <- percentile_ai_age_summary %>% filter(Grade == grd)
+  
+  # Check for percentiles where Adverse Impact Ratio is strictly below 0.80
+  ai_violations <- grade_df %>%
+    filter(Adverse_Impact_Ratio < 0.80) %>%
+    select(
+      Percentile, 
+      Cum_Rate_Under40, 
+      Cum_Rate_40Plus, 
+      Adverse_Impact_Ratio, 
+      Effect_Size_d
+    )
+  
+  if (nrow(ai_violations) == 0) {
+    cat("> **Result:** There is **no adverse impact** for", grd, "across any percentile cutoff (1 to 99). The Adverse Impact Ratio remains $\\ge 0.80$ at all evaluated score levels.\n\n")
+  } else {
+    pct_range <- paste0(min(ai_violations$Percentile), "th to ", max(ai_violations$Percentile), "th percentile")
+    cat("> **Result: ADVERSE IMPACT DETECTED** for", grd, "at", nrow(ai_violations), "percentile cut-off levels (spanning ", pct_range, ").\n\n")
+    
+    print(
+      kable(
+        ai_violations %>%
+          mutate(
+            Cum_Rate_Under40 = paste0(round(Cum_Rate_Under40 * 100, 1), "%"),
+            Cum_Rate_40Plus  = paste0(round(Cum_Rate_40Plus * 100, 1), "%")
+          ),
+        col.names = c("Percentile Cutoff", "Under 40 Pass Rate", "40 and Higher Pass Rate", "AIR (40+ / Under 40)", "Cohen's d"),
+        caption = paste("Percentiles with Adverse Impact Violations (AIR < 0.80) -", grd)
+      )
+    )
+    cat("\n\n")
+  }
+}
+```
+
+### D.7 Religion
+
+```{r}
+# 1. VERIFY DATA & PREPARE DATASET (RELIGION OR BELIEF)
+# Reference: 'Christian'
+# Focal:     'Other' (No Religion, Muslim, Hindu, Sikh, Other religion, Buddhist, Jewish)
+# Ignored:   'Prefer not to disclose', NA, and unlisted categories
+# ==============================================================================
+if (!exists("CSNT_Final_With_Scores")) {
+  stop("CSNT_Final_With_Scores is not present in the environment.")
+}
+
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+# Identify grade column safely
+col_grade <- intersect(
+  c("job_grade", "job_grade.x", "Job_Grade", "Grade"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+# Support both percentile_1PL and percentile_1PL_new column names
+col_pct <- intersect(
+  c("percentile_1PL_new", "percentile_1PL", "Percentile"), 
+  colnames(CSNT_Final_With_Scores)
+)[1]
+
+if (is.na(col_pct)) {
+  stop("Percentile column not found. Run percent_rank() step first.")
+}
+
+if (!"what_is_your_religion_or_belief" %in% colnames(CSNT_Final_With_Scores)) {
+  stop("Column 'what_is_your_religion_or_belief' not found in CSNT_Final_With_Scores.")
+}
+
+# Regex pattern for focal religion categories
+pattern_other_religion <- "^(No religion|Muslim|Hindu|Sikh|Other religion|Buddhist|Jewish)"
+
+# Classify religion/belief groups and filter
+df_ai_prep_religion <- CSNT_Final_With_Scores %>%
+  filter(.data[[col_grade]] %in% target_grades) %>%
+  mutate(
+    raw_religion = trimws(as.character(what_is_your_religion_or_belief)),
+    Religion_Group = case_when(
+      grepl("^Christian", raw_religion, ignore.case = TRUE)          ~ "Christian",
+      grepl(pattern_other_religion, raw_religion, ignore.case = TRUE) ~ "Other",
+      TRUE                                                            ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(Religion_Group)) %>%
+  filter(!is.na(.data[[col_pct]]), !is.na(theta_1PL_new)) %>%
+  mutate(
+    Grade          = factor(.data[[col_grade]], levels = target_grades),
+    Religion_Group = factor(Religion_Group, levels = c("Christian", "Other")),
+    Percentile     = round(as.numeric(.data[[col_pct]]))
+  ) %>%
+  filter(Percentile >= 1, Percentile <= 99)
+
+# ==============================================================================
+# 2. CALCULATE ADVERSE IMPACT RATIO FOR EACH PERCENTILE (1 TO 99) BY GRADE
+# Reference Group = 'Christian' | Focal Group = 'Other'
+# ==============================================================================
+
+# Step A: Grand totals per grade and religion group (denominators)
+total_counts_per_grade <- df_ai_prep_religion %>%
+  group_by(Grade) %>%
+  summarise(
+    Grand_Total_Christian = sum(Religion_Group == "Christian"),
+    Grand_Total_Other     = sum(Religion_Group == "Other"),
+    .groups               = "drop"
+  )
+
+# Step B: Counts and theta distribution per percentile
+pct_counts <- df_ai_prep_religion %>%
+  group_by(Grade, Percentile) %>%
+  summarise(
+    Count_Christian       = sum(Religion_Group == "Christian"),
+    Count_Other           = sum(Religion_Group == "Other"),
+    Mean_Theta_Christian  = mean(theta_1PL_new[Religion_Group == "Christian"], na.rm = TRUE),
+    Mean_Theta_Other      = mean(theta_1PL_new[Religion_Group == "Other"], na.rm = TRUE),
+    SD_Theta_Christian    = sd(theta_1PL_new[Religion_Group == "Christian"], na.rm = TRUE),
+    SD_Theta_Other        = sd(theta_1PL_new[Religion_Group == "Other"], na.rm = TRUE),
+    .groups               = "drop"
+  )
+
+# Step C: Cumulative selection rates and Adverse Impact Ratios (Other / Christian)
+percentile_ai_religion_summary <- pct_counts %>%
+  left_join(total_counts_per_grade, by = "Grade") %>%
+  arrange(Grade, desc(Percentile)) %>% # Descending for reverse cumulative sums
+  group_by(Grade) %>%
+  mutate(
+    # Cumulative candidates meeting or exceeding cut-off
+    Cum_Passed_Christian = cumsum(Count_Christian),
+    Cum_Passed_Other     = cumsum(Count_Other),
+    
+    # Cumulative Selection Rates
+    Cum_Rate_Christian   = Cum_Passed_Christian / Grand_Total_Christian,
+    Cum_Rate_Other       = Cum_Passed_Other / Grand_Total_Other,
+    
+    # AIR: Focal Group ('Other') / Reference Group ('Christian')
+    Adverse_Impact_Ratio = round(Cum_Rate_Other / ifelse(Cum_Rate_Christian == 0, NA, Cum_Rate_Christian), 4),
+    
+    # 4/5ths Rule flag (< 0.80)
+    Status_4_5ths        = ifelse(Adverse_Impact_Ratio < 0.80, "ADVERSE IMPACT (< 0.80)", "PASS (>= 0.80)"),
+    
+    # Effect Size (Cohen's d: Other - Christian)
+    Pooled_SD_Pct        = sqrt((replace_na(SD_Theta_Christian, 0)^2 + replace_na(SD_Theta_Other, 0)^2) / 2),
+    Effect_Size_d        = ifelse(Pooled_SD_Pct > 0, round((Mean_Theta_Other - Mean_Theta_Christian) / Pooled_SD_Pct, 4), 0)
+  ) %>%
+  arrange(Grade, Percentile) %>%
+  select(
+    Grade, Percentile, 
+    Count_Christian, Count_Other,
+    Cum_Passed_Christian, Cum_Passed_Other,
+    Cum_Rate_Christian, Cum_Rate_Other,
+    Adverse_Impact_Ratio, Status_4_5ths,
+    Mean_Theta_Christian, Mean_Theta_Other, Effect_Size_d
+  ) %>%
+  ungroup()
+
+# ==============================================================================
+# 3. VISUALIZATION: MULTI-PANEL ADVERSE IMPACT RATIO CHART BY GRADE
+# ==============================================================================
+theme_clean_report <- theme_minimal(base_size = 12) +
+  theme(
+    plot.background   = element_rect(fill = "white", color = NA),
+    panel.background  = element_rect(fill = "white", color = NA),
+    panel.grid.major  = element_line(color = "#e2e8f0", linewidth = 0.5),
+    panel.grid.minor  = element_blank(),
+    axis.text         = element_text(color = "#1e293b", size = 10),
+    axis.title        = element_text(color = "#0f172a", face = "bold"),
+    plot.title        = element_text(color = "#0f172a", face = "bold", size = 14),
+    plot.subtitle     = element_text(color = "#475569", size = 11),
+    strip.background  = element_rect(fill = "#f1f5f9", color = NA),
+    strip.text        = element_text(color = "#0f172a", face = "bold")
+  )
+
+p_religion_ai <- ggplot(percentile_ai_religion_summary, aes(x = Percentile, y = Adverse_Impact_Ratio)) +
+  annotate("rect", xmin = -Inf, xmax = Inf, ymin = 0, ymax = 0.80, 
+           fill = "#fee2e2", alpha = 0.6) +
+  geom_hline(yintercept = 0.80, linetype = "dashed", color = "#dc2626", linewidth = 0.9) +
+  geom_hline(yintercept = 1.00, linetype = "dotted", color = "#64748b", linewidth = 0.6) +
+  geom_line(color = "#059669", linewidth = 1.1) +
+  annotate("text", x = 18, y = 0.76, label = "4/5ths Rule (0.80)", 
+           color = "#dc2626", size = 3, fontface = "italic") +
+  facet_wrap(~ Grade, ncol = 2) +
+  scale_y_continuous(
+    limits = c(0.4, 1.4), 
+    breaks = seq(0.4, 1.4, by = 0.2),
+    labels = scales::number_format(accuracy = 0.1)
+  ) +
+  scale_x_continuous(breaks = seq(10, 90, by = 20)) +
+  labs(
+    title = "Religion / Belief Adverse Impact Ratio (AIR) by Grade Across Percentiles",
+    subtitle = "Values below dashed red line (AIR < 0.80) indicate potential adverse impact (Other / Christian)",
+    x = "Percentile Cut-off Score (Passing >= P)",
+    y = "Adverse Impact Ratio (AIR)"
+  ) +
+  theme_clean_report
+
+print(p_religion_ai)
+
+# ==============================================================================
+# 4. EXPORT TO WORKBOOK WITH SEPARATE SHEETS PER GRADE
+# ==============================================================================
+wb_religion <- createWorkbook()
+
+grade_sheet_names <- list(
+  "Administrative Officer"   = "Admin Officer",
+  "Executive Officer"        = "Exec Officer",
+  "Higher Executive Officer" = "Higher Exec Officer",
+  "Senior Executive Officer" = "Senior Exec Officer",
+  "Grade 7"                  = "Grade 7",
+  "Grade 6"                  = "Grade 6"
+)
+
+header_style <- createStyle(
+  fontColour = "#0f172a", 
+  fgFill = "#e2e8f0", 
+  textDecoration = "bold", 
+  halign = "center",
+  border = "bottom",
+  borderColour = "#94a3b8"
+)
+
+body_style <- createStyle(
+  fontColour = "#1e293b",
+  fgFill = "#ffffff",
+  halign = "left"
+)
+
+violation_style <- createStyle(
+  fontColour = "#991b1b",
+  fgFill = "#fee2e2"
+)
+
+for (grd in target_grades) {
+  sheet_name <- grade_sheet_names[[grd]]
+  addWorksheet(wb_religion, sheet_name)
+  
+  grade_data_export <- percentile_ai_religion_summary %>%
+    filter(Grade == grd) %>%
+    select(-Grade)
+  
+  writeData(wb_religion, sheet_name, grade_data_export, startRow = 1, startCol = 1)
+  
+  # Format body rows
+  addStyle(wb_religion, sheet_name, body_style, 
+           rows = 2:(nrow(grade_data_export) + 1), 
+           cols = 1:ncol(grade_data_export), 
+           gridExpand = TRUE)
+  
+  # Format header
+  addStyle(wb_religion, sheet_name, header_style, 
+           rows = 1, 
+           cols = 1:ncol(grade_data_export), 
+           gridExpand = TRUE)
+  
+  # Highlight rows with AIR < 0.80
+  violation_rows <- which(grade_data_export$Adverse_Impact_Ratio < 0.80) + 1
+  if (length(violation_rows) > 0) {
+    addStyle(wb_religion, sheet_name, violation_style, 
+             rows = violation_rows, 
+             cols = 1:ncol(grade_data_export), 
+             gridExpand = TRUE)
+  }
+  
+  setColWidths(wb_religion, sheet_name, cols = 1:ncol(grade_data_export), widths = "auto")
+}
+
+excel_religion_filename <- "CSNT_Religion_Adverse_Impact_by_Grade_2025.xlsx"
+saveWorkbook(wb_religion, excel_religion_filename, overwrite = TRUE)
+cat("\nExcel report successfully created with separate sheets:", excel_religion_filename, "\n\n")
+
+# ==============================================================================
+# 5. QUARTO SUMMARY: AI VIOLATION REPORT BY GRADE
+# ==============================================================================
+cat("## Religion / Belief Adverse Impact Summary by Grade (4/5ths Rule Evaluation)\n\n")
+
+for (grd in target_grades) {
+  cat("### Grade:", grd, "\n\n")
+  
+  grade_df <- percentile_ai_religion_summary %>% filter(Grade == grd)
+  
+  # Check for percentiles where Adverse Impact Ratio is strictly below 0.80
+  ai_violations <- grade_df %>%
+    filter(Adverse_Impact_Ratio < 0.80) %>%
+    select(
+      Percentile, 
+      Cum_Rate_Christian, 
+      Cum_Rate_Other, 
+      Adverse_Impact_Ratio, 
+      Effect_Size_d
+    )
+  
+  if (nrow(ai_violations) == 0) {
+    cat("> **Result:** There is **no adverse impact** for", grd, "across any percentile cutoff (1 to 99). The Adverse Impact Ratio remains $\\ge 0.80$ at all evaluated score levels.\n\n")
+  } else {
+    pct_range <- paste0(min(ai_violations$Percentile), "th to ", max(ai_violations$Percentile), "th percentile")
+    cat("> **Result: ADVERSE IMPACT DETECTED** for", grd, "at", nrow(ai_violations), "percentile cut-off levels (spanning ", pct_range, ").\n\n")
+    
+    print(
+      kable(
+        ai_violations %>%
+          mutate(
+            Cum_Rate_Christian = paste0(round(Cum_Rate_Christian * 100, 1), "%"),
+            Cum_Rate_Other     = paste0(round(Cum_Rate_Other * 100, 1), "%")
+          ),
+        col.names = c("Percentile Cutoff", "Christian Pass Rate", "Other Religion / Belief Pass Rate", "AIR (Other / Christian)", "Cohen's d"),
+        caption = paste("Percentiles with Adverse Impact Violations (AIR < 0.80) -", grd)
+      )
+    )
+    cat("\n\n")
+  }
+}
+
+```
+
+### E. Differential Item Functioning
+
+### 
+
+There is very little evidence of DIF in the current test structure because the test has become quite easy over time and because the new item parameters are on the negative side of the score spectrum.
+
+## Recommendations
+
+### 1.Test level recommendations
+
+##### A. Current Test Recommendations
+
+1.  Norm recommendations for current parameters
+
+    Based on the adverse impact analysis results, cut-off score percentiles can be increased without any adverse impact on the candidates.
+
+2.  Item Level Recommendations           
+
+    Some of the items with severe violations should be removed from the test to increase test performance. Some of the so-called difficult items have extreme exposure. They need to be removed from the item bank
+
+3.  Items with little exposure, though are easy items, can be kept in the bank to enhance item parameter variation in the test.
+
+4.  Some of the active items were not recalibrated because there was not enough exposure to include in the parameter calculation. Most trial items were exposed insufficiently which prevented IRT scoring
+
+##### B. Updating Recommendations
+
+1.  There is item difficulty and person ability mismatch in the test. The test lacks items around person abilities.
+2.  The test is in urgent need of new items higher than '0' difficulty parameter. The test requires a good number of difficult and moderately difficult items besides items around '0' difficulty parameter.
+3.  Considering most of the active items are on the negative side of difficulty spectrum, some of them are almost never exposed decreasing the efficiency of the item bank. forming item buckets could be an option.
+4.  Only items with the same stem have high correlations with each other-enemy items. Item bank design should consider keeping these items in different buckets.
+
+### 2. CAT System
+
+3.  Item exposure procedures need to be revised. Considering the number of test takers over the year 2025 a good number of items were so insufficiently exposed they were not calibrated. Below are the two approaches to item selection processes.
+
+-   **Sympson–Hetter (SH) Method:** Applies a conditional probability parameter (\\(t\_{j}\\)) to decide whether a selected high-information item is actually administered or temporarily held back. \[[1](https://osf.io/download/69bb1df591b0a904e43aa019/), [2](https://research.utwente.nl/files/5137108/cito_report07_1.pdf)\]
+
+-   **Randomesque / Stratified Selection:** Randomly chooses the next item from a small set of the top K most informative items rather than always picking the single absolute best item.
+
+In its current form, the CSNT could be renormed to reflect the current state of the test item parameters. This will require removal of some over exposed items and will reshape item presentation algorithm. Ideally, the test shouls be completely revised with the inclusion of a good number of difficult items. Overall, the CSNT is in urgent need of update.
