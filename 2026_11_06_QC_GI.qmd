@@ -1,0 +1,195 @@
+---
+title: "2026_11_06_QC_GI"
+format: html
+editor: visual
+---
+
+# 2026-11-06 Quality Control Feedback by Gaye Ildeniz
+
+Feedback stems from two different type of testing: 1) testing the script runs without errors, 2) checking the details of the analysis is relevant and accurate. The latter will also include any feedback on structure and formatting of the script.
+
+## 1. Script Testing
+
+### 1a. "CSNT_IRT_Comprehensive_Analysis.qmd"
+
+- row 55: summary tools library missing xquartz
+
+We ran the below but didn't solve issue, we ignored by adding a \# at the start and proceeded:\
+Sys.setenv(NOAWT = "true") options(summarytools.tk = FALSE)
+
+ACTION: Please check if this library is needed for any of the functions in the script otherwise can be deleted.
+
+- row 288: "fielddata" variable is saved as fielddata.x in the "CSNT_Complete_Item_Diversity_StoredClean_2025"
+
+diagnosis: row 88 generates .x and .y datafields for fielddata.x and batteryinstance.y
+
+Solution for the fielddata.x is added as:\
+2026-1027 GI QC 1a.
+
+- row 113: 1b.1 also had fielddata.x which is now removed
+
+- row 318: 2b. Person Theta scores 2025 section, under "Re-Check for item variance (6 rows nonmatching due to NAs)" Solution: added 2026-10-27 GI QC 1b. to replicate the code above using fielddata instead of fielddata.y
+
+- row 468: 3b. Person Theta Scores 2025. The first code snippet here references "person_scores_1pl" which has not been created as an object beforehand therefore it cannot find it.
+
+Solution: I have instead moved on to run the subsequent code chunk before rerunning this.
+
+ACTION: The ordering of the code snippets should be reorganised/swapped.
+
+### 1b. "Differential_Item_F_CSNT2025_Analysis.qmd"
+
+- row 116: the resulting data frame "CSNT_Complete_Item_Diversity_ScoredClean_2025" has one variable "NR171_3" (column #147) that is left aligned, different from the other columns. Please investigate the root cause and if any implications
+- row 181: Section 1.b.5 Select ONLY active items to evaluate test performance: File path is incorrect
+
+Solution: File path is changed under 2026-10-28 GI QC 2a.
+
+## 2. Feedback on Analysis and Formatting
+
+- I had no source of reference to verify what was produced in this case, I only had the script and the data files. For all scripts/quarto documents, there is a need to submit results along with scripts for QC not just the script and hoping that it will work exactly the same for different people. We need a single source to verify what the person quality controlling is getting on their device when the scripts are rerun.
+
+Solution: Going forward, author(s) of the scripts must render and export as pdf for original results and findings. This must be saved and provided as supplementary document to the QC panel for verification purposes. It can be in an email.
+
+ACTION: The final rendered quarto document following QC process to be uploaded on the shared drive.
+
+- The current file names are unnecessarily long and doesn't add anything valuable e.g. "comprehensive_analysis" or "Differential_Item_F\_...\_Analysis"
+
+ACTION: Please consider renaming the quarto documents used to something that follows the naming convention agreed in our ways of working. e.g. "YYYY_MM_DD_TESTNAMEABBREVIATION_ANALYSISNAME.qmd"
+
+- In their current version, there is lack of adequate information on different sections or comments on different code chunks, providing the necessary context.
+
+ACTION: Each section and subsection should be clearly labelled and concisely named. The rationale of different datasets loaded in needs to be added as comments to provide context. Concise explanation of the specific data manipulation method used or analytic approach chosen to be provided for each code chunk. Full reliance on AI generated comments within the code chunks does not make it relevant or applicable to this test, data set, or this particular cycle of maintenance. Decisions from an analysis needs to be mentioned, even if concisely, whereas elaborate discussion can be saved for the report.
+
+### 2a. "CSNT_IRT_Comprehensive_Analysis.qmd"
+
+- row 68: no longer applicable
+
+- rows 80-85: are these necessary to make sure the field data is numeric?
+
+- row 135: Section 1b.3: The result indicates that there are 358 rows with completely empty cells that will be dropped. I assumed the starting data set would only include test completions, where a test is submitted. How come there are rows representing test takers with no responses to any of the test items?
+
+ACTION: investigate if there is an error and any impact on the results
+
+- row 191: once active items with no variance are excluded from rasch modelling, what will happen to those items? will parameters or norms be inclusive of these items once updated? if not, how will they function as part of the live test? will they not have any parameters set?
+
+ACTION: I'd appreciate a response to this so that I learn.
+
+- row 195: Section 2. RASCH Analysis: it states active items only. Is it active items only or active items with variance only?
+
+ACTION: Please clarify to avoid misunderstandings and assumptions
+
+- row 265: This is an example only. These confirmatory messages for successful completion of commands seem unnecessary and in my view clutters the script. Any code will not work and will encounter an error a command cannot be run smoothly anyway.
+
+ACTION: Consider removing any function that presents a completion message from the script
+
+- row 266 infit and outfit fit statistics results. In the produced file "Rasch_Active_Items_Analysis_Results.xlsx" not all items have outfit statistics estimated
+
+ACTION: Check if this is due to an error and if any implications. I'd also like hear about the reason if it's not by error to learn.
+
+- row 298: It would be easier to follow if the specific dataset or dataframe is referenced here
+- row 338: unmatched_6 is a dataframe with zero observations so I'm not confident this is successfully identifying the unmatched 6 rows from the Section 2b. person theta scores 2025.
+
+ACTION: Investigate if there is an error for zero observations. Also investigate the underlying reason for why there were unmatched rows in the first place. Is it possible I found no matched observations because of running a different variation in the earlier parts of the script
+
+- row 354: It's not very clear what is referred to by "active Rasch scores"
+
+ACTION: Clarification either in the final version or in a response to QC feedback would be helpful
+
+- row 396: "Active_Rasch_IRT_Results_2025.xlsx" seems to be the same file as the previously written "Rasch_Active_Items_Analysis_Results.xlsx" (row 260).
+
+ACTION: Avoid duplication of files with the same content using different names. Using the same dataframe when the same set of data is needed in different parts of the script is more economical and creates less clutter. If I misunderstood and there is a justification for this recreation, 1) consider providing more context in the script, 2) try naming the file differently so that there is a distinction and not duplication
+
+- rows 417, 1191-1194: status check for model convergence is not really necessary. If there is an issue with model convergence this should come up as an error in the console anyway
+
+ACTION: Consider removing these checks and declutter the script if possible
+
+- rows 468 and 505: There are multiple 3b sections.
+
+ACTION: Avoid using the same section numbering for clarity.
+
+- rows 289, 468 and 702: Sections 2b Person Theta Scores 2025 2025 and 3b Person Theta Scores 2025 2025 and 4b Person Theta Scores 2025 have the exact same name. The distinction between the three is also not obvious in the analysis/code either
+
+ACTION: Use different section names that clearly convey the distinction if there is one in the analysis. If there is none, then consider removing the one that is irrelevant
+
+- rows 505 and 525: Sections 3b export report to excel and 1PL difficulty parameters. Similarly to above, the distinction between these two sections is unclear. The output produced seems to contain exactly the same parameters.
+
+ACTION: Check and either justify through contextual information for each section the distinction between the two or reduce duplication by removing one that is irrelevant
+
+- rows 604, 620, and 792: Similar to row 417, these confirmatory messages for successful completion of commands seem unnecessary and in my view clutters the script. Any code will not work and will encounter an error a command cannot be run smoothly anyway.
+
+ACTION: Consider removing any function that presents a completion message to declutter the script
+
+- row 961, step 6: It implies that the 2PL model is chosen
+
+ACTION: Confirm decision or chosen model at relevant stages of script to ensure stages of codes make sense
+
+- row 699: not sure if this verification is needed
+
+ACTION: Check if this verification is needed and either keep it with context added or remove
+
+- rows 702-755: This code chunk seems quite elaborate for only checking correlations between 2PL theta and raw sum scores
+
+ACTION: Check if the same outcome can be achieved with a shorter code
+
+- row 1204: Section Compare Item Discrimination & Difficulty Parameters. The column names in the "item_comparison" dataframe produced can be clearer
+
+ACTION: Check if the prefix X in variable names can be avoided
+
+- rows 1361 onward: Sections 6 and 7 (Adverse Impact, Diversity Frequencies and Determine diversity groups sections) are skipped from the QC process. These sections are expected to be coverd in the "Differential_Item_F_CSNT2025_Analysis.qmd" script as confirmed in 2026-11-04 meeting.
+
+- row 1062: "IRT_Active_2PL_Analysis_Results.xlsx". Looking at this output, the 2PL model fit with a one factor structure is better fitting than the 1PL model. This made me wonder two things: 1) What evidence from this analysis is suggesting the lack of dimensionality? 2) Other than implementation practicalities, what evidence is suggesting 1PL is a better fitting model than 2PL for the CSNT 2025 data?
+
+ACTION: I'd be grateful if the response can be shared in the group for an opportunity to discuss. A more organised script along with the report can also eliminate these confusions regarding analysis results and decisions made
+
+- Unidimensionality:
+
+ACTION: check if the full item correlations are explored and if there are any negative correlations indicating lack of unidimensionality. was it recording first 10 or if there is an excel written on this. Add an excel if not already done
+
+ACTION: Consider running an EFA as an ad hoc check
+
+ACTION: Consider including residual correlations
+
+ACTION: Check and add if not already. Rasch embedded unidimensionality test
+
+### 2b. "Differential_Item_F_CSNT2025_Analysis.qmd"
+
+- row 68: no longer applicable
+
+- row 79: View(CSNT_All_Grade_Type). Functions to view a dataset is not necessary to be part of the script. The person running the script can find and click in the Environment and view. Having this function in the script breaks the flow of the script as it opens up the dataset whilst the person going through it is trying to move on with the next chunk.
+
+ACTION: remove any view functions in the script.
+
+- rows 68 and 82: creating separate subsections with relevant numbering and labeling system can be considered for these type of examples
+
+- rows 85 and 90: contain typos in the comments as well (i.e. fielddata)
+
+- row 93-98: typo in the filedata (fielddata). This is likely to be causing the fielddata.x variable name generation.
+
+- row 119: Section 1.b.1 Remove duplicate candidate instances based on 'timecompleted'. This is only an example. The section naming suggests duplicates are removed in the code chunk below but it also checks if any is remained. The short summary of context and the aim of codes in each section could include these functions/commands where necessary (e.g. not all checks are needed in a script and there are other examples of these to be exempt from this request)
+
+- row 142: error: ! object 'fielddata.x' not found
+
+Solution: 2026-10-28 GI QC 2b added to check NA rows for fielddata.y rather than fielddata.x. This suggests 23 rows with NA
+
+- rows 279-281: This is an example only. These check for existence of a file is unnecessary and in my view clutters the script. Any code will not work and will encounter an error if the files are missing anyway.
+
+ACTION: Consider removing any function that checks for existence of files at the start of any code chunk
+
+- row 305-306: Is it necessary so many different column names are searched for and how did you determine the priority order for which one to choose i.e. \[1\] at the end? Could listing a wide range of column names be avoided by making sure the relevant and accurate naming is produced in the data frames?
+
+ACTION: Please investigate and see if the code can be streamlined
+
+- rows 319-326: reason is missing for the shorter sheet names (i.e. excel cannot exceed 31 characters). The code is shortening the sheet names and this is another example of the importance of providing adequate context either as comments in the code chunks or in the sections as appropriate to explain why this is done.
+
+ACTION: Ensure all reasoning, rationale is provided as part of contextual texts in sections and subsections as well as in code chunks as comments
+
+- row 272 onward: Sections need to be labelled clearly (e.g. 2. adverse impact \> followed by frequencies with no clear sub section numbering, then by diversity variables). This could easily be 2a. 2b. etc.
+
+ACTION: Ensure all sections are sequenced, numbered and labelled appropriately and in a relevant way so that the outline is useful and another analyst can reference and track where they are.
+
+## Outstanding questions for discussion
+
+- row 706: the use of sum scores: the rationale, method and interpretation of findings
+
+- row 287: wright map theta distribution with multiple peaks rather than a smooth negatively skewed distribution
+
+**End**
