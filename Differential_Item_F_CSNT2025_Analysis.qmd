@@ -144,6 +144,7 @@ CSNT_Complete_Item_Diversity_ScoredClean_2025 %>%
   filter(is.na(fielddata.x)) %>%
   select(fielddata.x, timecompleted)
 ```
+
 2026-10-28 GI QC 2b
 
 ```{r}
@@ -221,7 +222,9 @@ mirt_active_matrix <- clean_active_items2025[valid_rows_active, ]
 cat("Participants analyzed in mirt():", nrow(mirt_active_matrix), "\n")
 
 ```
+
 2026-10-28 GI QC 2a.
+
 ```{r}
 # 1. READ METADATA & GET ACTIVE ITEM NAMES
 item_metadata <- read_excel("~/Desktop/Datasets/2026_10_22_CSNT_Item_Usage_2026_All.xlsx")
