@@ -6,7 +6,7 @@ editor: visual
 
 ## Current Issues
 
-## Many Items With Low Difficulty
+### Many Items With Low Difficulty
 
 We urgently need a greater variety of mid and higher difficulty items. Start batch creation of difficult items in Gemini and see if we can expedite reviewing from SMEs.
 
@@ -29,3 +29,9 @@ There are indications that candidates could be using AI to complete the test, so
 -   **Transition to Gamified Assessments:** The most robust defense against AI is converting the numerical reasoning construct into a gamified format. By requiring continuous interaction with dynamic, changing content—such as performing rapid arithmetic on moving elements in real-time—you eliminate the static text that AI relies on, effectively neutralizing cheating through test design rather than surveillance. (Far Future Implementation)
 
 -   **Live Verification:** Incorporate a multi-method battery where the online assessment is followed by a brief live interview. Asking the candidate to verbally explain the cognitive steps they took to arrive at the 23.625% solution for NR-H050 usually exposes applicants who relied on an LLM, as they often fail to articulate the underlying logic. (Could be proposed to hiring departments)
+
+### Items With Negative Correlations
+
+This potentially explains the non-Unidimensionality.
+
+**ACTION:** We should explore more trying to fit multi-factor models.
