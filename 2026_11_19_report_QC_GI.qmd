@@ -1,0 +1,29 @@
+---
+title: "2026_11_19_report_QC_GI"
+format: html
+editor: visual
+---
+
+# CSNT_Report_2026
+
+-writing is cumbersome, difficult to understand
+-data description: those who completed the tests - for IRT ( could also add "purposes") or rephrase to communicate the ones who completed adequate/minimum required test items in CAT
+-those with variance in their responses: you need to clarify what you mean by variance in this type of test.
+-Complete NAs: is a technical term and is abstract/vague for a stakeholder who doesn't know R
+-with no variance: needs to be clarified what is meant for this test format
+-data selection was based on 'timecompleted': this is again very technical for someone who doesn't know our data structure
+-A. item usage report: "identified 372 items starting with NR (excluding NRT)" the stakeholder reading this won't know the difference between the two
+- which output is showing "item usage by percentage can be found here"? is it above or below? is it Table 1 or the tibble. first is not showing any percentages, the second has no explanation of variable names.
+- there is no result reported by text under the 1PL test summary?
+-B.1 item difficulty. Need to translate what it means that "only 5 items have positive difficulty parameters"
+-B.2 Model fit: "due to sample size, chi square test will not work, as it is sample size dependent". Need to provide a lay explanation of what it means to be sample size dependent. You may say it's sensitive to detect even the smallest differences between observed and expected parameters but also need to articulate what it means to be sample size dependent
+-"items in the CAT system are not missing completely at random (NCAR)" is currently left in the air. What should the reader do with this information?
+-B.2 wright map: the figure is followed by the item difficulties. Then there is a text description that explains the wright map. Needs to be reorganised or clearly written what is being described
+-B.3 there is a single sentence stating the average item difficulty drift between the 2021 norm and the current 1PL analysis. This needs to be followed by a statement of explanation: what does this mean for a non technical stakeholder?
+-Targeting Alignment: Item Curves vs Person Ability Distribution. There is no test explanation of this graph
+-Distribution of Pairwise Yen's Q3 residual correlations (CAT Item Ba....) title is not all included. What does this graph suggest? My interpretation is that only a small chunk of items have residual correlations, this doesn't necessarily indicate a multi dimensional construct, rather some items that do not meet the local independence assumption
+-These graphs are not clearly labelled in a section or with a description of what they show and what they mean
+-D. Adverse Impact: consider reordering the frequency breakdown of variables and categories (e.g. gender: man, woman, prefer to self describe, prefer not to disclose)
+-The list of reference groups can be rearranged so it's clearly labelled for each analytical output rather than as a list on its own
+-the AIR table is very unusual and difficult to follow. I see the text below the table says there is no AI until 50th percentile but I'm not sure if that's what the table is suggesting
+-LEFT AT DISABILITY
