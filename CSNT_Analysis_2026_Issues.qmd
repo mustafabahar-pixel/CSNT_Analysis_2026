@@ -10,7 +10,7 @@ editor: visual
 
 We urgently need a greater variety of mid and higher difficulty items. Start batch creation of difficult items in Gemini and see if we can expedite reviewing from SMEs.
 
-### Items With Very Low Exposure
+### Items With Very Low E xposure
 
 We have many items with very low exposure, this makes estimating item parameters very difficult.
 

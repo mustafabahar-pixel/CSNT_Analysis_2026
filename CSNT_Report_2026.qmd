@@ -59,7 +59,7 @@ Call Data
 
 # 1. Read all columns as raw text and specify 'na' strings during import
 CSNT_All_Diversity_Test_Data24_26Scored <- read_excel(
-  "~/Desktop/Datasets/2026_10_22_CSNT_Complete_Item_Diversity_Scored.xlsx",
+  "~/Desktop/Datasets/2026_10_22_CSNT_Item_Diversity_Scored.xlsx",
   col_types = "text",
   na = c("NULL", "null", "NA", "")
 )
