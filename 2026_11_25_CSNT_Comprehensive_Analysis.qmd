@@ -1,0 +1,4045 @@
+---
+title: "CSNT Comprehensive_Psychometric Analysis"
+format:
+  html:
+    theme: flatly # Clean light background with high contrast dark text
+    toc: true
+    df-print: paged # Clean interactive paged tables
+---
+
+```{=html}
+<style>
+  /* Force tables to render with clean white background and black text */
+  table, .table, .pagedtable {
+    background-color: #ffffff !important;
+    color: #111111 !important;
+  }
+  
+  /* High-contrast dark header with bold white text */
+  th, .table th, .pagedtable-header {
+    background-color: #1a252f !important;
+    color: #ffffff !important;
+    font-weight: bold !important;
+  }
+
+  /* Force console output boxes to render bright high-vis text */
+  pre.code-output, div.cell-output-stdout pre {
+    background-color: #1e1e1e !important;
+    color: #00ff66 !important;
+    border: 1px solid #444444 !important;
+  }
+</style>
+```
+
+------------------------------------------------------------------------
+
+### 
+
+## Loading necessary libraries
+
+```{r}
+#| message: false
+#| warning: false
+
+library(dplyr)
+library(DT)
+library(ggplot2)
+library(knitr)
+library(latticeExtra)
+library(matrixStats)
+library(mirt)
+library(openxlsx)
+library(patchwork)
+library(readxl)
+library(stringr)
+library(tidyverse)
+library(WrightMap)
+library(writexl)
+```
+
+```{css}
+/* 1. Style code blocks and console outputs */
+div.sourceCode, pre.sourceCode, .cell-output pre, .cell-output code {
+  background-color: #1e1e1e !important;
+  color: #f8f8f2 !important;
+  border-radius: 6px;
+}
+
+/* 2. Style standard Markdown and knitr/gt/kable tables */
+.table, table {
+  background-color: #ffffff !important;
+  color: #000000 !important;
+  --bs-table-bg: #ffffff !important;
+  --bs-table-color: #000000 !important;
+}
+
+.table thead th, table th {
+  background-color: #333333 !important;
+  color: #ffffff !important;
+}
+```
+
+## 1. Data Preparation
+
+### 1.a Data preparation before the analysis
+
+File path is set to run from the desktop. Next, Data without 'timecompleted' are dropped so that incomplete test instances are not included in IRT analysis. This also decreases data sparsity.
+
+```{r}
+CSNT_Item_Diversity_Scored <- read_excel("~/Desktop/Datasets/2026_10_22_CSNT_Item_Diversity_Scored.xlsx")
+CSNT_Item_Diversity_Scored <- CSNT_Item_Diversity_Scored %>%
+drop_na(timecompleted)
+
+write_xlsx(CSNT_Item_Diversity_Scored, "2026_10_22_CSNT_Item_Diversity_Scored.xlsx")
+
+CSNT_Item_Diversity_Scored <- CSNT_Item_Diversity_Scored[, !colAlls(is.na(CSNT_Item_Diversity_Scored))]
+
+CSNT_All_Grade_Type <- read.csv("~/Desktop/Datasets/2026_10_22_CSNT_All_Grade_Type.csv")
+View(CSNT_All_Grade_Type)
+```
+
+(Added variables from the Otap_Vac table to get the grades and applicant types: Merge datasets based on fielddata). Data is merged here. This could add extra diversity data without test completions.
+
+```{r}
+# 1. Clean 'fielddata' in place as non-scientific whole-number strings
+df1_clean <- CSNT_All_Grade_Type %>%
+  mutate(fielddata = trimws(sprintf("%.0f", as.numeric(fielddata))))
+
+df2_clean <- CSNT_Item_Diversity_Scored %>%
+  mutate(fielddata = trimws(sprintf("%.0f", as.numeric(fielddata))))
+
+# 2. Join datasets directly on 'fielddata'
+CSNT_Item_Diversity_Scored <- left_join(df1_clean, df2_clean, by = "fielddata")
+
+# 3. Check matches using a column that exists ONLY in df2_clean (not df1_clean)
+df2_only_cols <- setdiff(names(df2_clean), names(df1_clean))
+col_from_df2 <- df2_only_cols[1]
+
+match_count <- sum(!is.na(CSNT_Item_Diversity_Scored[[col_from_df2]]))
+cat("Number of matching rows:", match_count, "out of", nrow(df1_clean), "\n")
+```
+
+### 1.b. Creating annual dataset -2025
+
+For the purpose of analysing annual dataset, test completions in year 2025 (based on 'timecompleted') were selected.
+
+```{r}
+temp<- CSNT_Item_Diversity_Scored 
+temp$timecompleted<-as.numeric(substr(temp$timecompleted, 1,4))
+CSNT_Item_Diversity_Scored_2025<-filter(temp, timecompleted==2025)
+```
+
+### 1.b.1 Remove duplicate candidate instances based on 'timecompleted'
+
+While all may be completed test instances there may be multiple instances of test takers. SO, duplicates are dropped from the IRT analysis.
+
+```{r}
+CSNT_Item_Diversity_Scored_2025 <- CSNT_Item_Diversity_Scored_2025 %>%
+arrange(timecompleted) %>%      # Sort dates in ascending order (earliest first)
+distinct(fielddata, .keep_all = TRUE) # Keep first occurrence per ID, retain all other columns
+sum(duplicated(CSNT_Item_Diversity_Scored_2025$fielddata))
+```
+
+### 1.b.2 Documenting all items with complete missing values
+
+```{r}
+all_na_items <- colSums(!is.na(CSNT_Item_Diversity_Scored_2025)) == 0
+names(CSNT_Item_Diversity_Scored_2025)[all_na_items]
+
+all_na_cols <- colSums(!is.na(CSNT_Item_Diversity_Scored_2025)) == 0
+cat("Number of completely empty items:", sum(all_na_cols), "\n")
+
+```
+
+### 1.b.3 Drop items with complete NA values
+
+```{r}
+CSNT_Item_Diversity_Scored_2025 <- CSNT_Item_Diversity_Scored_2025[, !colAlls(is.na(CSNT_Item_Diversity_Scored_2025))]
+ncol(CSNT_Item_Diversity_Scored_2025)
+```
+
+### 1.b.4 Check - Documenting all applicants with no responses
+
+```{r}
+all_na_persons <- rowSums(!is.na(CSNT_Item_Diversity_Scored_2025)) == 0
+which(all_na_persons)
+
+```
+
+### 1.b.5 Select Only active items to evaluate test performance.
+
+Trial items are dropped from the data. Additionally, test items with no variance are dropped.
+
+```{r}
+# 1. READ METADATA & GET ACTIVE ITEM NAMES 
+item_metadata <- read_excel("~/Documents/R Studio Work/CSNT_Item_Usage_2026_All.xlsx")
+
+active_items_list <- item_metadata %>%
+  filter(Type == "Active") %>%
+  pull(ItemID)
+
+# 2. SUBSET MASTER DATA & ENFORCE VARIANCE FILTERING
+# ----------------------------------------------------------------------
+id_var <- "fielddata"
+
+# Extract active item columns from 2025 master dataset
+active_matrix_raw <- CSNT_Item_Diversity_Scored_2025 %>%
+  dplyr::select(any_of(active_items_list))
+
+# Calculate p-values (item means) to find zero-variance items
+item_p_values <- colMeans(active_matrix_raw, na.rm = TRUE)
+
+# Filter criteria: Non-NaN AND 0 < p-value < 1 (removes zero-variance items)
+valid_variance_cols <- !is.nan(item_p_values) & item_p_values > 0 & item_p_values < 1
+
+# Subset item matrix to active + non-zero variance items only
+clean_active_items2025 <- active_matrix_raw[, valid_variance_cols]
+
+cat("Active items requested:", length(active_items_list), "\n")
+cat("Active items retained (non-zero variance):", ncol(clean_active_items2025), "\n")
+cat("Zero-variance active items dropped:", sum(!valid_variance_cols), "\n")
+
+# ----------------------------------------------------------------------
+# 3. FILTER OUT PARTICIPANTS WITH NO RESPONSES ON ACTIVE ITEMS
+
+# Logical mask for participants with AT LEAST ONE response across active items
+valid_rows_active <- rowSums(!is.na(clean_active_items2025)) > 0
+
+# Extract pure matrix passed to mirt() (no IDs, no demographic cols)
+mirt_active_matrix <- clean_active_items2025[valid_rows_active, ]
+
+cat("Participants analyzed in mirt():", nrow(mirt_active_matrix), "\n")
+```
+
+### 1.c Average Item Usage
+
+```{r}
+#| label: fig-total-item-usage
+#| fig-cap: "Distribution of Total Item Usage (2025) per Person"
+#| fig-width: 7.5
+#| fig-height: 4.5
+#| message: false
+#| warning: false
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# Step 1: Count 0s, 1s, and total item usage per person
+person_usage <- CSNT_Item_Diversity_Scored_2025 %>%           # Replace 'your_data' with your dataframe name
+  pivot_longer(
+    cols = starts_with("NR") & !starts_with("NRT"),
+    names_to = "item",
+    values_to = "response"
+  ) %>%
+  group_by(fielddata) %>%
+  summarise(
+    count_0     = sum(response == 0, na.rm = TRUE),
+    count_1     = sum(response == 1, na.rm = TRUE),
+    total_usage = count_0 + count_1,
+    .groups     = "drop"
+  )
+
+# Preview the counts
+head(person_usage)
+
+# Step 2: Plot histogram of total item usage with count labels on top of each bar
+ggplot(person_usage, aes(x = total_usage)) +
+  geom_histogram(
+    binwidth = 1,                       # Adjust binwidth if total_usage spans a wide range (e.g., 5 or 10)
+    fill = "#2b5c8f",
+    color = "white",
+    alpha = 0.85
+  ) +
+  stat_bin(
+    binwidth = 1,                       # Must match geom_histogram's binwidth
+    geom = "text",
+    aes(label = ifelse(after_stat(count) > 0, after_stat(count), "")),
+    vjust = -0.5,
+    size = 3.5,
+    fontface = "bold"
+  ) +
+  geom_vline(
+    aes(xintercept = mean(total_usage, na.rm = TRUE)),
+    color = "#d9534f", linetype = "dashed", linewidth = 0.8
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+  labs(
+    title = "Distribution of Total Item Usage per Person",
+    subtitle = paste0(
+      "Mean Total Usage = ", round(mean(person_usage$total_usage, na.rm = TRUE), 1),
+      " items (n = ", nrow(person_usage), " persons)"
+    ),
+    x = "Total Item Usage (Count of 0s + Count of 1s)",
+    y = "Number of Persons"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    panel.grid.minor = element_blank()
+  )
+```
+
+Stopping rule for 0.5 SE does never activate at 10 item exposure implying items do not meet the stopping criteria. There are even cases where candidates have to solve the maximum 20 questions
+
+## 2. RASCH Analysis
+
+For the purpose of IRT analysis, Rasch, 1PL and 2PL methods were tested to compare model performances.
+
+Rasch analysis was carried out with active items only.
+
+```{r}
+# 1. FIT RASCH MODEL ON ACTIVE ITEMS
+fit_rasch <- mirt(
+  data     = mirt_active_matrix,
+  model    = 1,
+  itemtype = "Rasch",
+  SE       = TRUE,   # Required so parameter standard errors (SE_b) are actually computed
+  verbose  = FALSE
+)
+
+cat("Rasch Model Converged:", extract.mirt(fit_rasch, "converged"), "\n")
+
+# 2. EXTRACT ITEM PARAMETERS & STANDARD ERRORS SAFELY
+rasch_pars <- coef(fit_rasch, IRTpars = TRUE, simplify = TRUE)$items
+
+# Extract SE for 'b' directly from the unsimplified coef list (simplify = TRUE drops SEs)
+rasch_coef_se <- coef(fit_rasch, IRTpars = TRUE, printSE = TRUE)
+rasch_se_b <- vapply(rownames(rasch_pars), function(itm) {
+  mat <- rasch_coef_se[[itm]]
+  if (!is.null(mat) && "SE" %in% rownames(mat)) as.numeric(mat["SE", "b"]) else NA_real_
+}, numeric(1))
+
+# 3. COMPUTE FIT STATISTICS (Infit, Outfit, X2)
+rasch_fit_infit <- itemfit(fit_rasch, fit_stats = "infit")
+rasch_fit_X2    <- itemfit(fit_rasch, fit_stats = "X2")
+
+rasch_fit_infit$z.infit[is.nan(rasch_fit_infit$z.infit)]   <- NA_real_
+rasch_fit_infit$z.outfit[is.nan(rasch_fit_infit$z.outfit)] <- NA_real_
+
+# 4. IDENTIFY MISFITTING ITEMS
+misfitting_msq <- rasch_fit_infit %>%
+  filter(outfit > 1.5 | infit > 1.5 | outfit < 0.5 | infit < 0.5)
+
+misfitting_p <- rasch_fit_X2 %>%
+  filter(p.X2 < 0.05)
+
+cat("Items misfitting by MSQ (<0.5 or >1.5):", nrow(misfitting_msq), "\n")
+cat("Items misfitting by Chi-Square (p < 0.05):", nrow(misfitting_p), "\n")
+
+# 5. BUILD CONSOLIDATED ITEM SUMMARY TABLE
+rasch_item_summary <- tibble::tibble(
+  Item         = rownames(rasch_pars),
+  Difficulty_b = round(as.numeric(rasch_pars[, "b"]), 3),
+  SE_b         = round(rasch_se_b, 3),
+  Infit_MSQ    = round(as.numeric(rasch_fit_infit$infit), 3),
+  Z_Infit      = round(as.numeric(rasch_fit_infit$z.infit), 3),
+  Outfit_MSQ   = round(as.numeric(rasch_fit_infit$outfit), 3),
+  Z_Outfit     = round(as.numeric(rasch_fit_infit$z.outfit), 3),
+  X2_p_value   = round(as.numeric(rasch_fit_X2$p.X2), 4)
+)
+
+print(head(rasch_item_summary, 10))
+```
+
+### 2.a. Person Theta scores 2025
+
+```{r}
+# 1. EXTRACT THETA & STANDARD ERRORS ONCE (Reused by Wright Map & Export)}
+rasch_person_scores <- fscores(fit_rasch, method = "EAP", full.scores.SE = TRUE)
+
+# 2. VERIFY ID VARIABLE & ALIGNED ROWS
+id_var <- "fielddata"
+stopifnot(id_var %in% names(CSNT_Item_Diversity_Scored_2025))
+
+valid_rows_rasch <- rowSums(!is.na(clean_active_items2025)) > 0
+stopifnot(sum(valid_rows_rasch) == nrow(rasch_person_scores))
+
+# 3. BUILD LOOKUP TABLE & MERGE INTO MASTER DATASET
+rasch_theta_df <- tibble::tibble(
+  !!id_var   := CSNT_Item_Diversity_Scored_2025[[id_var]][valid_rows_rasch],
+  Rasch_Theta = as.numeric(rasch_person_scores[, "F1"]),
+  Rasch_SE    = as.numeric(rasch_person_scores[, "SE_F1"])
+)
+
+CSNT_Item_Diversity_Scored_2025 <- CSNT_Item_Diversity_Scored_2025 %>%
+  dplyr::select(-dplyr::any_of(c("Rasch_Theta", "Rasch_SE"))) %>%
+  dplyr::left_join(rasch_theta_df, by = id_var)
+
+cat(sprintf(
+  "Successfully matched %d active Rasch scores back to %d master rows.\n",
+  nrow(rasch_theta_df),
+  nrow(CSNT_Item_Diversity_Scored_2025)
+))
+```
+
+Re-Check for item variance (6rows nonmatching due to NAs)
+
+```{r}
+# 1. IDENTIFY ROWS WITHOUT A RASCH SCORE (OR MISSING ID)}
+rasch_unmatched <- CSNT_Item_Diversity_Scored_2025 %>%
+  filter(is.na(Rasch_Theta) | is.na(.data[[id_var]]))
+
+cat("Unmatched / unscored rows:", nrow(rasch_unmatched), "\n")
+
+# 2. CHECK RESPONSE VARIANCE ON THE EXACT ACTIVE ITEM COLUMNS
+if (nrow(rasch_unmatched) > 0) {
+  unmatched_items <- rasch_unmatched %>%
+    dplyr::select(dplyr::any_of(colnames(mirt_active_matrix)))
+  
+  row_variances <- apply(unmatched_items, 1, var, na.rm = TRUE)
+  print(row_variances)
+}
+```
+
+### 2.b. Person-Item Map (Wright Map) for fit_rasch
+
+```{r}
+# Reuses rasch_person_scores (Chunk 2) and rasch_pars (Chunk 1) — no recomputation
+wrightMap(
+  thetas          = rasch_person_scores[, "F1"],
+  thresholds      = rasch_pars[, "b"],
+  main.title      = "Wright Map: Active Items vs. Person Ability (2025)",
+  axis.persons    = "Person Ability (Theta)",
+  axis.items      = "Item Difficulty (Logits)",
+  show.item.names = TRUE
+)
+```
+
+The above graph shows the mismatch between candidate abilities and item difficulties in the item bank.
+
+### 2.c. Export Report to Excel
+
+```{r}
+
+# 1. PREPARE PARTICIPANT DATASET FOR EXPORT (Consistent Rasch_Theta / Rasch_SE names)}
+rasch_participant_export <- CSNT_Item_Diversity_Scored_2025 %>%
+  dplyr::select(
+    dplyr::any_of(c(id_var, "timecompleted", "year_completed", "Rasch_Theta", "Rasch_SE"))
+  )
+
+# 2. CREATE WORKBOOK & ADD SHEETS
+wb_rasch <- createWorkbook()
+
+addWorksheet(wb_rasch, "Rasch_Item_Summary")
+writeDataTable(
+  wb_rasch,
+  sheet      = "Rasch_Item_Summary",
+  x          = rasch_item_summary,
+  tableStyle = "TableStyleMedium9"
+)
+setColWidths(wb_rasch, sheet = "Rasch_Item_Summary", cols = 1:ncol(rasch_item_summary), widths = "auto")
+
+addWorksheet(wb_rasch, "Participant_Scores_2025")
+writeDataTable(
+  wb_rasch,
+  sheet      = "Participant_Scores_2025",
+  x          = rasch_participant_export,
+  tableStyle = "TableStyleMedium2"
+)
+setColWidths(wb_rasch, sheet = "Participant_Scores_2025", cols = 1:ncol(rasch_participant_export), widths = "auto")
+
+# 3. SAVE WORKBOOK
+rasch_excel_file <- "Rasch_IRT_Results_2025.xlsx"
+saveWorkbook(wb_rasch, file = rasch_excel_file, overwrite = TRUE)
+
+cat("Successfully exported multi-tab workbook to:", rasch_excel_file, "\n")
+```
+
+## 3. 1PL Analysis
+
+### 3.a IRT Model 3.b. Getting Fit Statistics
+
+**`mirt` standard error estimation fails on large datasets (320 items)** or fails to converge on the Information matrix computation, causing `pars_1pl_list$se` to silently return `NULL` (length 0).
+
+When `mirt` encounters numerical instability during SE computation, it drops the standard errors entirely while keeping the parameter estimates.
+
+**Failsafe Length Matching:** `se_a_vec` and `se_b_vec` are guaranteed to have exactly **320 elements** regardless of whether `mirt` successfully computed standard errors or returned `NULL`.
+
+```{r}
+# 1. FIT 1PL MODEL ON ACTIVE ITEMS
+fit_1pl <- mirt(
+  data     = mirt_active_matrix,
+  model    = 1,
+  itemtype = "1PL",
+  SE       = TRUE,
+  verbose  = FALSE
+)
+
+cat("1PL Model Converged:", extract.mirt(fit_1pl, "converged"), "\n")
+
+# 2. EXTRACT ITEM PARAMETERS & STANDARD ERRORS SAFELY
+pars_1pl <- coef(fit_1pl, IRTpars = TRUE, simplify = TRUE)$items
+
+# Extract SEs from unsimplified coef list (simplify = TRUE drops SE rows in mirt)
+coef_se_1pl <- coef(fit_1pl, IRTpars = TRUE, printSE = TRUE)
+
+extract_se <- function(coef_list, items, par_name) {
+  vapply(items, function(itm) {
+    mat <- coef_list[[itm]]
+    if (!is.null(mat) && "SE" %in% rownames(mat) && par_name %in% colnames(mat)) {
+      as.numeric(mat["SE", par_name])
+    } else {
+      NA_real_
+    }
+  }, numeric(1))
+}
+
+se_a_vec <- extract_se(coef_se_1pl, rownames(pars_1pl), "a")
+se_b_vec <- extract_se(coef_se_1pl, rownames(pars_1pl), "b")
+
+# 3. COMPUTE ITEM FIT STATISTICS
+item_fit_1pl <- itemfit(fit_1pl, fit_stats = "infit")
+
+# 4. BUILD CONSOLIDATED 1PL ITEM SUMMARY TABLE
+summary_1pl <- tibble::tibble(
+  Item         = rownames(pars_1pl),
+  Slope_a      = round(as.numeric(pars_1pl[, "a"]), 3),
+  SE_a         = round(se_a_vec, 3),
+  Difficulty_b = round(as.numeric(pars_1pl[, "b"]), 3),
+  SE_b         = round(se_b_vec, 3),
+  Infit_MSQ    = round(as.numeric(item_fit_1pl$infit), 3),
+  Outfit_MSQ   = round(as.numeric(item_fit_1pl$outfit), 3)
+)
+
+print(head(summary_1pl, 10))
+
+# 5. OVERALL DESCRIPTIVE SUMMARY FOR 1PL DIFFICULTY
+summary_stats_1pl <- tibble::tibble(
+  Metric = c(
+    "Total Items", "Common Slope (a)", "Mean Difficulty (b)",
+    "SD Difficulty", "Min Difficulty", "Max Difficulty", "Median Difficulty"
+  ),
+  Value = c(
+    nrow(summary_1pl),
+    round(mean(summary_1pl$Slope_a, na.rm = TRUE), 4),
+    round(mean(summary_1pl$Difficulty_b, na.rm = TRUE), 4),
+    round(sd(summary_1pl$Difficulty_b, na.rm = TRUE), 4),
+    round(min(summary_1pl$Difficulty_b, na.rm = TRUE), 4),
+    round(max(summary_1pl$Difficulty_b, na.rm = TRUE), 4),
+    round(median(summary_1pl$Difficulty_b, na.rm = TRUE), 4)
+  )
+)
+
+cat("\n=== 1PL ITEM DIFFICULTY SUMMARY STATS ===\n")
+print(knitr::kable(summary_stats_1pl))
+```
+
+### 3.b Extracting Person ability and SEs
+
+```{r}
+
+# 1. EXTRACT PERSON ABILITY (THETA) & SE ONCE (Reused by Plots & Export)
+fscores_1pl <- fscores(fit_1pl, method = "EAP", full.scores.SE = TRUE)
+
+# 2. VERIFY ID VARIABLE & EXACT ROW ALIGNMENT
+id_var    <- "fielddata"
+item_cols <- colnames(mirt_active_matrix)
+stopifnot(id_var %in% names(CSNT_Item_Diversity_Scored_2025))
+
+scored_rows <- rowSums(!is.na(CSNT_Item_Diversity_Scored_2025[, item_cols])) > 0
+
+cat("Master rows:", nrow(CSNT_Item_Diversity_Scored_2025), "\n")
+cat("Non-empty rows found:", sum(scored_rows), "\n")
+cat("fscores_1pl rows:", nrow(fscores_1pl), "\n")
+stopifnot(sum(scored_rows) == nrow(fscores_1pl))
+
+# 3. BUILD LOOKUP TABLE & MERGE INTO MASTER DATASET
+theta_1pl_df <- tibble::tibble(
+  !!id_var := CSNT_Item_Diversity_Scored_2025[[id_var]][scored_rows],
+  Theta_1PL = as.numeric(fscores_1pl[, "F1"]),
+  SE_1PL    = as.numeric(fscores_1pl[, "SE_F1"])
+)
+
+CSNT_Item_Diversity_Scored_2025 <- CSNT_Item_Diversity_Scored_2025 %>%
+  dplyr::select(-dplyr::any_of(c("Theta_1PL", "SE_1PL"))) %>%
+  dplyr::left_join(theta_1pl_df, by = id_var)
+
+cat("Successfully merged", sum(!is.na(CSNT_Item_Diversity_Scored_2025$Theta_1PL)), "1PL scores!\n")
+```
+
+### 3.c 1PL Diagnostic Plots & Targeting Alignment (ICC + Person Density)
+
+```{r}
+
+# 1. STANDARD MIRT DIAGNOSTIC PLOTS
+plot(fit_1pl, type = "trace",     main = "1PL Item Trace Lines")
+plot(fit_1pl, type = "infotrace", main = "1PL Item Information Curves")
+plot(fit_1pl, type = "infoSE",    main = "1PL Test Information & SE")
+
+# 2. TARGETING ALIGNMENT PLOT (Reuses fscores_1pl & pars_1pl — no recomputation)
+person_thetas_1pl <- as.numeric(fscores_1pl[, "F1"])
+person_df_1pl     <- tibble::tibble(theta = person_thetas_1pl)
+
+a_common   <- as.numeric(pars_1pl[1, "a"])
+b_params   <- pars_1pl[, "b"]
+theta_grid <- seq(-4, 4, length.out = 200)
+
+icc_data_1pl <- tidyr::expand_grid(
+  item_id = names(b_params),
+  theta   = theta_grid
+) %>%
+  mutate(
+    b    = b_params[item_id],
+    prob = plogis(a_common * (theta - b))  # Uses actual 1PL slope 'a'
+  )
+
+p_icc <- ggplot(icc_data_1pl, aes(x = theta, y = prob, group = item_id)) +
+  geom_line(alpha = 0.45, color = "#2b5c8f", linewidth = 0.6) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey40") +
+  scale_x_continuous(limits = c(-4, 4), breaks = seq(-4, 4, 1)) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  labs(
+    title    = "1PL Targeting Alignment: Item Curves vs. Person Ability Distribution",
+    subtitle = sprintf("Dashed line = P(0.5) threshold (b); common 1PL slope a = %.3f", a_common),
+    x        = NULL,
+    y        = "Probability P(Theta)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    axis.text.x      = element_blank(),
+    panel.grid.minor = element_blank()
+  )
+
+p_density <- ggplot(person_df_1pl, aes(x = theta)) +
+  geom_density(fill = "#e07a5f", color = "#c45d42", alpha = 0.6, adjust = 1.2) +
+  geom_vline(
+    xintercept = mean(person_thetas_1pl, na.rm = TRUE),
+    color = "#8b2610", linetype = "dashed", linewidth = 0.8
+  ) +
+  scale_x_continuous(limits = c(-4, 4), breaks = seq(-4, 4, 1)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
+  labs(
+    x = "Latent Trait Ability (1PL Theta)",
+    y = "Person Density"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(panel.grid.minor = element_blank())
+
+combined_plot_1pl <- p_icc / p_density + plot_layout(heights = c(3, 1))
+print(combined_plot_1pl)
+```
+
+### 3.d Export Report to Excel for Records
+
+```{r}
+
+# 1. PREPARE PARTICIPANT EXPORT (Consistent Theta_1PL / SE_1PL column names)
+participant_export_1pl <- CSNT_Item_Diversity_Scored_2025 %>%
+  dplyr::select(
+    dplyr::any_of(c(id_var, "timecompleted", "year_completed", "Theta_1PL", "SE_1PL"))
+  )
+
+# 2. CREATE SINGLE CONSOLIDATED WORKBOOK (3 SHEETS)
+wb_1pl <- createWorkbook()
+
+addWorksheet(wb_1pl, "1PL_Item_Summary")
+writeDataTable(wb_1pl, "1PL_Item_Summary", x = summary_1pl, tableStyle = "TableStyleMedium9")
+setColWidths(wb_1pl, "1PL_Item_Summary", cols = 1:ncol(summary_1pl), widths = "auto")
+
+addWorksheet(wb_1pl, "1PL_Difficulty_Summary_Stats")
+writeDataTable(wb_1pl, "1PL_Difficulty_Summary_Stats", x = summary_stats_1pl, tableStyle = "TableStyleMedium6")
+setColWidths(wb_1pl, "1PL_Difficulty_Summary_Stats", cols = 1:ncol(summary_stats_1pl), widths = "auto")
+
+addWorksheet(wb_1pl, "Participant_1PL_Scores")
+writeDataTable(wb_1pl, "Participant_1PL_Scores", x = participant_export_1pl, tableStyle = "TableStyleMedium2")
+setColWidths(wb_1pl, "Participant_1PL_Scores", cols = 1:ncol(participant_export_1pl), widths = "auto")
+
+# 3. SAVE WORKBOOK
+excel_file_1pl <- "1PL_IRT_Results_2025.xlsx"
+saveWorkbook(wb_1pl, file = excel_file_1pl, overwrite = TRUE)
+
+cat("Successfully exported multi-tab 1PL workbook to:", excel_file_1pl, "\n")
+```
+
+## 4. 2PL Analysis
+
+### 4.a. IRT 2PL Model
+
+First steps
+
+```{r}
+# 1. REMOVE ZERO-VARIANCE ITEMS & ANY RESULTING ALL-NA ROWS
+item_vars       <- apply(mirt_active_matrix, 2, var, na.rm = TRUE)
+mirt_2pl_matrix <- mirt_active_matrix[, !is.na(item_vars) & item_vars > 0, drop = FALSE]
+mirt_2pl_matrix <- mirt_2pl_matrix[rowSums(!is.na(mirt_2pl_matrix)) > 0, , drop = FALSE]
+
+cat("Items retained for 2PL:", ncol(mirt_2pl_matrix), "of", ncol(mirt_active_matrix), "\n")
+cat("Respondents retained for 2PL:", nrow(mirt_2pl_matrix), "\n")
+
+# 2. FIT 2PL MODEL ON CLEAN MATRIX
+# Note: SE = FALSE is kept for speed/stability on sparse CAT data
+fit_2pl <- mirt(
+  data      = mirt_2pl_matrix,
+  model     = 1,
+  itemtype  = "2PL",
+  SE        = FALSE,
+  quadpts   = 21,
+  TOL       = 0.001,
+  technical = list(NCYCLES = 2000),
+  verbose   = FALSE
+)
+
+cat("2PL Model Converged:", extract.mirt(fit_2pl, "converged"), "\n")
+
+# 3. EXTRACT ITEM PARAMETERS (SLOPE 'a' & DIFFICULTY 'b')
+pars_2pl <- coef(fit_2pl, IRTpars = TRUE, simplify = TRUE)$items
+
+# 4. COMPUTE ITEM FIT STATISTICS SAFELY (Zh WITH FAILSAFE)
+item_fit_2pl <- tryCatch(
+  itemfit(fit_2pl, fit_stats = "Zh", na.rm = TRUE),
+  error = function(e) {
+    warning("Zh item fit bypassed: ", conditionMessage(e))
+    NULL
+  }
+)
+
+zh_vec <- if (!is.null(item_fit_2pl) && "Zh" %in% colnames(item_fit_2pl)) {
+  round(as.numeric(item_fit_2pl$Zh), 3)
+} else {
+  rep(NA_real_, nrow(pars_2pl))
+}
+
+# 5. BUILD CONSOLIDATED 2PL ITEM SUMMARY TABLE
+summary_2pl <- tibble::tibble(
+  Item         = rownames(pars_2pl),
+  Slope_a      = round(as.numeric(pars_2pl[, "a"]), 3),
+  Difficulty_b = round(as.numeric(pars_2pl[, "b"]), 3),
+  Zh_Fit       = zh_vec
+)
+
+print(head(summary_2pl, 10))
+
+# 6. OVERALL DESCRIPTIVE SUMMARY FOR 2PL PARAMETERS
+summary_stats_2pl <- tibble::tibble(
+  Metric = c(
+    "Total Items",
+    "Mean Slope (a)", "SD Slope (a)", "Min Slope (a)", "Max Slope (a)",
+    "Mean Difficulty (b)", "SD Difficulty (b)", "Min Difficulty (b)", "Max Difficulty (b)", "Median Difficulty (b)"
+  ),
+  Value = c(
+    nrow(summary_2pl),
+    round(mean(summary_2pl$Slope_a, na.rm = TRUE), 4),
+    round(sd(summary_2pl$Slope_a, na.rm = TRUE), 4),
+    round(min(summary_2pl$Slope_a, na.rm = TRUE), 4),
+    round(max(summary_2pl$Slope_a, na.rm = TRUE), 4),
+    round(mean(summary_2pl$Difficulty_b, na.rm = TRUE), 4),
+    round(sd(summary_2pl$Difficulty_b, na.rm = TRUE), 4),
+    round(min(summary_2pl$Difficulty_b, na.rm = TRUE), 4),
+    round(max(summary_2pl$Difficulty_b, na.rm = TRUE), 4),
+    round(median(summary_2pl$Difficulty_b, na.rm = TRUE), 4)
+  )
+)
+
+cat("\n=== 2PL ITEM PARAMETER SUMMARY STATS ===\n")
+print(knitr::kable(summary_stats_2pl))
+```
+
+```{r}
+
+# 1. COMPUTE EAP PERSON SCORES & SE ONCE
+fscores_2pl <- fscores(
+  fit_2pl,
+  method         = "EAP",
+  full.scores    = TRUE,
+  full.scores.SE = TRUE
+)
+
+# 2. VERIFY ID VARIABLE & EXACT ROW ALIGNMENT ON MASTER DATASET
+id_var        <- "fielddata"
+items_2pl     <- colnames(mirt_2pl_matrix)
+stopifnot(id_var %in% names(CSNT_Item_Diversity_Scored_2025))
+
+scored_rows_2pl <- rowSums(!is.na(CSNT_Item_Diversity_Scored_2025[, items_2pl, drop = FALSE])) > 0
+
+cat("Master rows:", nrow(CSNT_Item_Diversity_Scored_2025), "\n")
+cat("Non-empty 2PL rows found:", sum(scored_rows_2pl), "\n")
+cat("fscores_2pl rows:", nrow(fscores_2pl), "\n")
+stopifnot(sum(scored_rows_2pl) == nrow(fscores_2pl))
+
+# 3. BUILD LOOKUP TABLE & LEFT-JOIN INTO MASTER DATASET (Consistent Theta_2PL / SE_2PL)
+theta_2pl_df <- tibble::tibble(
+  !!id_var := CSNT_Item_Diversity_Scored_2025[[id_var]][scored_rows_2pl],
+  Theta_2PL = as.numeric(fscores_2pl[, "F1"]),
+  SE_2PL    = as.numeric(fscores_2pl[, "SE_F1"])
+)
+
+CSNT_Item_Diversity_Scored_2025 <- CSNT_Item_Diversity_Scored_2025 %>%
+  dplyr::select(-dplyr::any_of(c("Theta_2PL", "SE_2PL", "Active_2PL_Theta", "Active_2PL_SE"))) %>%
+  dplyr::left_join(theta_2pl_df, by = id_var)
+
+cat("Successfully merged", sum(!is.na(CSNT_Item_Diversity_Scored_2025$Theta_2PL)), "2PL scores!\n")
+
+# 4. ALIGNMENT CHECK (Both vectors derived from the exact same master rows)
+raw_scores_2pl <- rowSums(CSNT_Item_Diversity_Scored_2025[, items_2pl, drop = FALSE], na.rm = TRUE)
+alignment_corr <- cor(
+  raw_scores_2pl[scored_rows_2pl],
+  CSNT_Item_Diversity_Scored_2025$Theta_2PL[scored_rows_2pl],
+  use = "complete.obs"
+)
+
+cat("Alignment Check — Correlation between Raw Sum Score and 2PL Theta:", round(alignment_corr, 4), "\n")
+```
+
+```{r}
+plot(fit_2pl, type = "trace",     main = "2PL Item Trace Lines")
+plot(fit_2pl, type = "infotrace", main = "2PL Item Information Curves")
+plot(fit_2pl, type = "infoSE",    main = "2PL Test Information & Standard Error")
+```
+
+### 4.b. Person Theta Scores 2025
+
+Includes checking for row matches in the new form of the dataset as the `valid_rows` evaluates to **137,243 `TRUE` values** (matching the total length of the master dataset), whereas `fscores()` returned **137,181 rows**. Correlation is .95 due to 62 non-matching(NA) rows.
+
+### 4.c. Export Report to Excel
+
+```{r}
+# 1. PREPARE PARTICIPANT EXPORT
+participant_export_2pl <- CSNT_Item_Diversity_Scored_2025 %>%
+  dplyr::select(
+    dplyr::any_of(c(id_var, "timecompleted", "year_completed", "Theta_2PL", "SE_2PL"))
+  )
+
+# 2. CREATE CONSOLIDATED WORKBOOK (3 SHEETS)
+wb_2pl <- createWorkbook()
+
+addWorksheet(wb_2pl, "2PL_Item_Summary")
+writeDataTable(wb_2pl, "2PL_Item_Summary", x = summary_2pl, tableStyle = "TableStyleMedium9")
+setColWidths(wb_2pl, "2PL_Item_Summary", cols = 1:ncol(summary_2pl), widths = "auto")
+
+addWorksheet(wb_2pl, "2PL_Parameter_Summary_Stats")
+writeDataTable(wb_2pl, "2PL_Parameter_Summary_Stats", x = summary_stats_2pl, tableStyle = "TableStyleMedium6")
+setColWidths(wb_2pl, "2PL_Parameter_Summary_Stats", cols = 1:ncol(summary_stats_2pl), widths = "auto")
+
+addWorksheet(wb_2pl, "Participant_2PL_Scores")
+writeDataTable(wb_2pl, "Participant_2PL_Scores", x = participant_export_2pl, tableStyle = "TableStyleMedium2")
+setColWidths(wb_2pl, "Participant_2PL_Scores", cols = 1:ncol(participant_export_2pl), widths = "auto")
+
+# 3. SAVE WORKBOOK
+excel_file_2pl <- "2PL_IRT_Results_2025.xlsx"
+saveWorkbook(wb_2pl, file = excel_file_2pl, overwrite = TRUE)
+
+cat("Successfully exported multi-tab 2PL workbook to:", excel_file_2pl, "\n")
+```
+
+### Item Parameter Drift
+
+This compares the current item difficulties to the new 1PL item difficulties.
+
+```{r}
+# 1. LOAD 2021 ITEM PARAMETERS FROM EXCEL
+df_2021_params <- read_excel("~/Desktop/Datasets/2026_CSNT_ItemParameter2021_Usage2026.xlsx", sheet = "Sheet1") %>%
+  mutate(Item_id = str_trim(as.character(Item_id))) %>%
+  select(Item_id, Type, ItemStatus_Old, Total_Usage = Total, Difficulty_2021 = Item_Difficulty)
+
+# 2. CLEAN & MERGE WITH NEW 1PL PARAMETERS (`summary_1pl`)
+df_param_comp <- summary_1pl %>%
+  mutate(Item = str_trim(as.character(Item))) %>%
+  inner_join(df_2021_params, by = c("Item" = "Item_id")) %>%
+  filter(!is.na(Difficulty_2021), !is.na(Difficulty_b)) %>%
+  mutate(
+    Diff_Shift = Difficulty_b - Difficulty_2021,
+    Abs_Shift  = abs(Diff_Shift),
+    Drift_Flag = ifelse(Abs_Shift >= 0.30, "Large Drift (|Δb| ≥ 0.30)", "Stable (|Δb| < 0.30)")
+  )
+
+cat("Matched items with both 2021 and 2026 1PL parameters:", nrow(df_param_comp), "\n")
+cat("Pearson correlation (r):", round(cor(df_param_comp$Difficulty_2021, df_param_comp$Difficulty_b), 4), "\n")
+cat("Mean Signed Shift (New - Old):", round(mean(df_param_comp$Diff_Shift), 4), "\n")
+cat("Mean Absolute Shift (MAD):", round(mean(df_param_comp$Abs_Shift), 4), "\n\n")
+
+# ==============================================================================
+# CHART 1: DUMBBELL PLOT SHOWING DISTANCE BETWEEN 2021 & NEW 1PL DIFFICULTY
+# (Displays top 40 items with largest parameter shift; remove slice_max() to plot all)
+# ==============================================================================
+plot_data_dumbbell <- df_param_comp %>%
+  slice_max(order_by = Abs_Shift, n = 40) %>%
+  mutate(Item = reorder(Item, Diff_Shift))
+
+p_dumbbell <- ggplot(plot_data_dumbbell, aes(y = Item)) +
+  # Connecting line representing the distance (parameter drift)
+  geom_segment(
+    aes(x = Difficulty_2021, xend = Difficulty_b, yend = Item, color = Drift_Flag),
+    linewidth = 0.9, alpha = 0.85
+  ) +
+  # 2021 Old Parameter Point
+  geom_point(aes(x = Difficulty_2021, shape = "2021 Parameter (Old)"), color = "#4A6FE3", size = 2.8) +
+  # 2026 New 1PL Parameter Point
+  geom_point(aes(x = Difficulty_b, shape = "New 1PL Parameter"), color = "#D33F6A", size = 2.8) +
+  scale_color_manual(
+    name = "Parameter Stability",
+    values = c("Large Drift (|Δb| ≥ 0.30)" = "#D33F6A", "Stable (|Δb| < 0.30)" = "#7F8C8D")
+  ) +
+  scale_shape_manual(
+    name = "Calibration",
+    values = c("2021 Parameter (Old)" = 16, "New 1PL Parameter" = 17)
+  ) +
+  labs(
+    title    = "Item Parameter Drift: 2021 Difficulty vs. New 1PL Difficulty (Top 40 Shifts)",
+    subtitle = "Horizontal line length indicates exact distance (Δb = New 1PL − 2021)",
+    x        = "Item Difficulty (b)",
+    y        = "Item ID"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(
+    legend.position = "bottom",
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(size = 8.5)
+  )
+
+print(p_dumbbell)
+
+# ==============================================================================
+# CHART 2: FULL-BANK SCATTER PLOT WITH IDENTITY LINE (ALL MATCHED ITEMS)
+ 
+# CHART 2: FULL-BANK SCATTER PLOT WITH IDENTITY LINE (No ggrepel required)
+p_scatter <- ggplot(df_param_comp, aes(x = Difficulty_2021, y = Difficulty_b, color = Drift_Flag)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "black", linewidth = 0.8) +
+  geom_point(alpha = 0.75, size = 2.2) +
+  geom_text(
+    data = df_param_comp %>% slice_max(Abs_Shift, n = 12),
+    aes(label = Item),
+    vjust = -0.7, size = 3, check_overlap = TRUE, show.legend = FALSE
+  ) +
+  scale_color_manual(
+    name = "Stability Threshold",
+    values = c("Large Drift (|Δb| ≥ 0.30)" = "#D33F6A", "Stable (|Δb| < 0.30)" = "#2C7BB6")
+  ) +
+  labs(
+    title    = "Full Item Bank Calibration Check: 2021 vs. New 1PL Difficulty",
+    subtitle = "Dashed line = exact equivalence (y = x); vertical distance = parameter shift (Δb)",
+    x        = "2021 Item Difficulty (Item_Difficulty)",
+    y        = "New 1PL Item Difficulty (Difficulty_b)"
+  ) +
+  theme_minimal(base_size = 11) +
+  theme(legend.position = "bottom")
+
+print(p_scatter)
+```
+
+Correlation between Theta_1PL and Total_correct (raw correct)
+
+```{r}
+cor_result <- cor.test(
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL, 
+  CSNT_Item_Diversity_Scored_2025$total_correct_1, 
+  method = "pearson", 
+  use = "complete.obs"
+)
+
+# Print full statistical output (r, t-value, df, p-value, 95% CI)
+cor_result
+```
+
+## PHASE TWO
+
+`type = 'LD'` produces local dependence metrics designed specifically for large item sets without triggering integer overflow:
+
+### Unidimensionality Comparison ——————-
+
+Unidimensionality Test. fit all three models under a single-factor structure and evaluate their **Global Fit Indices (**$M_2$, RMSEA, CFI, TLI), **Model Comparison Statistics (AIC, BIC, LRT)**, and **Local Independence (**$Q_3$).
+
+Using `auto.prior = TRUE` handles this internally without needing manual parameter numbers.
+
+When a 2PL Item Response Theory (IRT) model fails to converge—especially in large item sets or when dealing with sparse response patterns—it is almost always caused by **extreme parameter estimates** (slopes $a \to \infty$ or $a \le 0$) or **high correlation between items(AI)**.
+
+```{r}
+# Set seed for reproducible sampling & scoring
+set.seed(42)
+
+# Define key identifier variable explicitly
+id_var <- "fielddata"
+
+# ==============================================================================
+# STEP 1: CLEAN MATRIX PREPARATION (ZERO-VARIANCE REMOVAL)
+item_vars    <- apply(mirt_active_matrix, 2, var, na.rm = TRUE)
+clean_matrix <- mirt_active_matrix[, item_vars > 0 & !is.na(item_vars)]
+
+cat("------------------------------------------------------------------\n")
+cat("Original Items:", ncol(mirt_active_matrix), "\n")
+cat("Clean Items (Variance > 0):", ncol(clean_matrix), "\n")
+cat("Candidates in Matrix (N):", nrow(clean_matrix), "\n")
+cat("Master Dataset Rows:", nrow(CSNT_Item_Diversity_Scored_2025), "\n")
+cat("------------------------------------------------------------------\n\n")
+
+# ==============================================================================
+# STEP 2: FULL-MODEL ESTIMATION (RASCH, 1PL, 2PL)
+cat("Fitting 1PL Model...\n")
+fit_1pl <- mirt(
+  clean_matrix, 
+  model = 1, 
+  itemtype = '1PL', 
+  SE = FALSE, 
+  quadpts = 21, 
+  TOL = 0.001,
+  technical = list(NCYCLES = 2000), 
+  verbose = FALSE
+)
+
+cat("Fitting 2PL Model...\n")
+fit_2pl <- mirt(
+  clean_matrix, 
+  model = 1, 
+  itemtype = '2PL', 
+  auto.prior = TRUE, 
+  SE = FALSE, 
+  quadpts = 21, 
+  TOL = 0.001,
+  technical = list(NCYCLES = 2000), 
+  verbose = FALSE
+)
+
+cat("1PL Model Converged:", extract.mirt(fit_1pl, 'converged'), "\n")
+cat("2PL Model Converged:", extract.mirt(fit_2pl, 'converged'), "\n\n")
+
+# ==============================================================================
+# STEP 3: MEMORY-SAFE GLOBAL FIT INDICES (M2 VIA QMC WITH SAFE FALLBACK)
+cat("Computing M2 Fit Indices on full models using QMC integration...\n")
+
+# Safely compute M2 for 1PL
+m2_1pl <- tryCatch({
+  M2(fit_1pl, na.rm = TRUE, M2.a = TRUE, QMC = TRUE, quadpts = 15)
+}, error = function(e) {
+  warning("1PL M2 calculation bypassed due to matrix size/vector limit: ", e$message)
+  return(NULL)
+})
+
+# Safely compute M2 for 2PL
+m2_2pl <- tryCatch({
+  M2(fit_2pl, na.rm = TRUE, M2.a = TRUE, QMC = TRUE, quadpts = 15)
+}, error = function(e) {
+  warning("2PL M2 calculation bypassed due to matrix size/vector limit: ", e$message)
+  return(NULL)
+})
+
+# Extract basic model metrics guaranteed to exist
+fit_1pl_loglik <- extract.mirt(fit_1pl, 'logLik')
+fit_2pl_loglik <- extract.mirt(fit_2pl, 'logLik')
+
+fit_1pl_aic    <- extract.mirt(fit_1pl, 'AIC')
+fit_2pl_aic    <- extract.mirt(fit_2pl, 'AIC')
+
+fit_1pl_bic    <- extract.mirt(fit_1pl, 'BIC')
+fit_2pl_bic    <- extract.mirt(fit_2pl, 'BIC')
+
+# Build summary table with conditional M2 fields
+unidim_fit_summary <- data.frame(
+  Model  = c("1PL", "2PL"),
+  logLik = round(c(fit_1pl_loglik, fit_2pl_loglik), 2),
+  AIC    = round(c(fit_1pl_aic, fit_2pl_aic), 2),
+  BIC    = round(c(fit_1pl_bic, fit_2pl_bic), 2),
+  M2     = c(if(!is.null(m2_1pl)) round(m2_1pl$M2, 2) else NA, 
+             if(!is.null(m2_2pl)) round(m2_2pl$M2, 2) else NA),
+  df     = c(if(!is.null(m2_1pl)) m2_1pl$df else NA, 
+             if(!is.null(m2_2pl)) m2_2pl$df else NA),
+  RMSEA  = c(if(!is.null(m2_1pl)) round(m2_1pl$RMSEA, 3) else NA, 
+             if(!is.null(m2_2pl)) round(m2_2pl$RMSEA, 3) else NA),
+  CFI    = c(if(!is.null(m2_1pl)) round(m2_1pl$CFI, 3) else NA, 
+             if(!is.null(m2_2pl)) round(m2_2pl$CFI, 3) else NA),
+  TLI    = c(if(!is.null(m2_1pl)) round(m2_1pl$TLI, 3) else NA, 
+             if(!is.null(m2_2pl)) round(m2_2pl$TLI, 3) else NA),
+  stringsAsFactors = FALSE
+)
+
+cat("\n=== UNIDIMENSIONAL GLOBAL FIT INDICES ===\n")
+print(unidim_fit_summary) 
+
+# ============================================================
+# STEP 4: DIRECT MODEL COMPARISON (ANOVA / LIKELIHOOD RATIO TEST)
+model_comp_anova <- anova(fit_1pl, fit_2pl)
+model_comp_df    <- as.data.frame(model_comp_anova)
+
+cat("\n=== MODEL COMPARISON (ANOVA / AIC / BIC) ===\n")
+print(model_comp_df)
+
+# ==============================================================================
+# STEP 5: MANUAL Q3 LOCAL INDEPENDENCE RESIDUAL CHECK
+cat("\nComputing Yen's Q3 Residual Correlation Matrix...\n")
+
+# Extract candidate theta scores (EAP)
+theta_scores <- fscores(fit_2pl, method = 'EAP')
+pars_2pl     <- coef(fit_2pl, IRTpars = TRUE, simplify = TRUE)$items
+
+# Calculate expected probability matrix (P_ij)
+theta_mat <- matrix(theta_scores[, 1], nrow = nrow(clean_matrix), ncol = ncol(clean_matrix))
+a_vec     <- matrix(pars_2pl[, "a"], nrow = nrow(clean_matrix), ncol = ncol(clean_matrix), byrow = TRUE)
+b_vec     <- matrix(pars_2pl[, "b"], nrow = nrow(clean_matrix), ncol = ncol(clean_matrix), byrow = TRUE)
+
+P_mat   <- 1 / (1 + exp(-a_vec * (theta_mat - b_vec)))
+res_mat <- clean_matrix - P_mat
+
+# Pairwise residual correlation matrix
+q3_matrix <- cor(res_mat, use = "pairwise.complete.obs")
+q3_values <- q3_matrix[upper.tri(q3_matrix)]
+
+q3_summary_df <- data.frame(
+  Metric = c("Mean Q3 Correlation", "Max Q3 Correlation", "Total Pairs Evaluated", "Pairs Q3 > 0.20"),
+  Value  = c(
+    round(mean(q3_values, na.rm = TRUE), 4),
+    round(max(q3_values, na.rm = TRUE), 4),
+    length(q3_values),
+    sum(q3_values > 0.20, na.rm = TRUE)
+  ),
+  stringsAsFactors = FALSE
+)
+
+cat("\n=== LOCAL INDEPENDENCE SUMMARY (2PL) ===\n")
+print(q3_summary_df)
+
+# ==============================================================================
+# STEP 6: EXTRACT ITEM PARAMETERS & PERSON SCORES FOR 2PL
+
+# 1. Summary table for 2PL item parameters
+summary_2pl_items <- data.frame(
+  Item         = rownames(pars_2pl),
+  Slope_a      = round(as.numeric(pars_2pl[, "a"]), 3),
+  Difficulty_b = round(as.numeric(pars_2pl[, "b"]), 3),
+  stringsAsFactors = FALSE
+)
+
+# 2. Extract EAP person scores from fit_2pl_active
+fscores_2pl <- fscores(
+  fit_2pl, 
+  method = 'EAP', 
+  full.scores = TRUE, 
+  full.scores.SE = TRUE
+)
+
+theta_vec <- as.numeric(fscores_2pl[, "F1"])
+se_vec    <- as.numeric(fscores_2pl[, "SE_F1"])
+
+# Initialize NA template columns in Master Dataset
+CSNT_Item_Diversity_Scored_2025$Active_2PL_Theta <- NA_real_
+CSNT_Item_Diversity_Scored_2025$Active_2PL_SE    <- NA_real_
+
+# Identify exact row positions scored by mirt
+scored_indices <- which(
+  rowSums(!is.na(clean_matrix)) > 0 & 
+  apply(clean_matrix, 1, var, na.rm = TRUE) > 0
+)
+
+# Fallback if variance criteria length varies slightly
+if (length(scored_indices) != length(theta_vec)) {
+  scored_indices <- which(rowSums(!is.na(clean_matrix)) > 0)[1:length(theta_vec)]
+}
+
+# Assign Theta and SE safely to Master Dataset
+CSNT_Item_Diversity_Scored_2025$Active_2PL_Theta[scored_indices] <- theta_vec
+CSNT_Item_Diversity_Scored_2025$Active_2PL_SE[scored_indices]    <- se_vec
+
+cat("\nSuccessfully assigned 2PL Theta and SE to Master Dataset.\n")
+cat("Master Dataset total rows:", nrow(CSNT_Item_Diversity_Scored_2025), "\n")
+cat("Scored candidates assigned:", sum(!is.na(CSNT_Item_Diversity_Scored_2025$Active_2PL_Theta)), "\n")
+
+# Verify alignment correlation
+raw_scores <- rowSums(clean_matrix, na.rm = TRUE)
+valid_idx  <- !is.na(CSNT_Item_Diversity_Scored_2025$Active_2PL_Theta)
+
+alignment_corr <- cor(
+  raw_scores[valid_idx], 
+  CSNT_Item_Diversity_Scored_2025$Active_2PL_Theta[valid_idx], 
+  use = "complete.obs"
+)
+
+cat("Alignment Check — Correlation between Raw Sum Score and 2PL Theta:", round(alignment_corr, 4), "\n")
+
+
+# ==============================================================================
+# STEP 7: DIAGNOSTIC PLOTS
+plot(fit_2pl, type = 'trace', main = '2PL Item Trace Lines')
+plot(fit_2pl, type = 'infotrace', main = '2PL Item Information Curves')
+plot(fit_2pl, type = 'infoSE', main = 'Test Information & SE')
+
+# ==============================================================================
+# STEP 8: EXCEL EXPORT VIA OPENXLSX
+cat("\nExporting results to Excel workbook...\n")
+
+wb <- createWorkbook()
+
+# Sheet 1: Model Comparative Summary (M2 & ANOVA)
+addWorksheet(wb, "Model_Comparison")
+writeData(wb, "Model_Comparison", "GLOBAL M2 FIT INDICES", startCol = 1, startRow = 1)
+writeDataTable(wb, "Model_Comparison", unidim_fit_summary, startCol = 1, startRow = 2, tableStyle = "TableStyleMedium9")
+
+writeData(wb, "Model_Comparison", "MODEL COMPARISON (ANOVA / AIC / BIC)", startCol = 1, startRow = 8)
+writeDataTable(wb, "Model_Comparison", model_comp_df, startCol = 1, startRow = 9, rowNames = TRUE, tableStyle = "TableStyleMedium9")
+setColWidths(wb, "Model_Comparison", cols = 1:ncol(unidim_fit_summary), widths = "auto")
+
+# Sheet 2: 2PL Item Parameters
+addWorksheet(wb, "2PL_Item_Parameters")
+writeDataTable(wb, "2PL_Item_Parameters", summary_2pl_items, tableStyle = "TableStyleMedium9")
+setColWidths(wb, "2PL_Item_Parameters", cols = 1:ncol(summary_2pl_items), widths = "auto")
+
+# Sheet 3: Candidate Person Scores
+export_participant_df <- CSNT_Item_Diversity_Scored_2025 %>% 
+  dplyr::select(any_of(c(id_var, "timecompleted", "year_completed", "Active_2PL_Theta", "Active_2PL_SE")))
+
+addWorksheet(wb, "Candidate_Scores")
+writeDataTable(wb, "Candidate_Scores", export_participant_df, tableStyle = "TableStyleMedium2")
+setColWidths(wb, "Candidate_Scores", cols = 1:ncol(export_participant_df), widths = "auto")
+
+# Sheet 4: Local Independence (Q3 Summary)
+addWorksheet(wb, "Local_Independence_Q3")
+writeDataTable(wb, "Local_Independence_Q3", q3_summary_df, tableStyle = "TableStyleMedium9")
+setColWidths(wb, "Local_Independence_Q3", cols = 1:ncol(q3_summary_df), widths = "auto")
+
+# Save Workbook
+excel_filename <- "IRT_Active_2PL_Analysis_Results.xlsx"
+saveWorkbook(wb, excel_filename, overwrite = TRUE)
+
+cat("\n==================================================================\n")
+cat("SUCCESS! Analysis complete and saved to:", excel_filename, "\n")
+cat("==================================================================\n")
+```
+
+#### Identify the Highest-Correlated Item Pairs
+
+To see which specific items are violating local independence, run this block to pull the top dependent pairs:
+
+(R script to identify all item pairs violating Local Independence ($Q_3 > 0.20$), list every unique item involved in a violation, count how many times each item appears in a violating pair, and export the flagged items and pairs directly for test refinement.
+
+In Yen's $Q_3$ analysis, centering $Q_3$ values around their average (since the expected value of $Q_3$ under local independence is slightly negative, approx. $-1/(N_{\text{items}}-1)$) is often standard practice, but evaluating raw $Q_3 > 0.20$ or adjusted $Q_3^* > 0.20$ directly identifies the worst offending pairs.)
+
+```{r}
+# 1. PROCESS Q3 MATRIX INTO DISTINCT PAIRS
+# ==============================================================================
+q3_long <- as.data.frame(as.table(q3_matrix)) %>%
+  filter(Var1 != Var2) %>%
+  mutate(
+    Item1 = pmin(as.character(Var1), as.character(Var2)),
+    Item2 = pmax(as.character(Var1), as.character(Var2))
+  ) %>%
+  distinct(Item1, Item2, .keep_all = TRUE) %>%
+  rename(Q3_Correlation = Freq) %>%
+  arrange(desc(Q3_Correlation))
+
+# ==============================================================================
+# 2. FILTER ALL PAIRS VIOLATING LOCAL INDEPENDENCE (Q3 > 0.20)
+ 
+q3_cutoff <- 0.20
+
+q3_violations <- q3_long %>%
+  filter(Q3_Correlation > q3_cutoff)
+
+# ==============================================================================
+# 3. IDENTIFY ALL UNIQUE ITEMS VIOLATING LOCAL INDEPENDENCE & COUNT FREQUENCY
+ 
+violating_items_summary <- data.frame(
+  Item = c(q3_violations$Item1, q3_violations$Item2)
+) %>%
+  group_by(Item) %>%
+  summarise(
+    Violation_Count = n(),
+    Max_Q3_Value   = NA_real_, # Populated below
+    .groups         = "drop"
+  ) %>%
+  arrange(desc(Violation_Count))
+
+# Add max Q3 correlation per item for prioritization
+for (i in seq_len(nrow(violating_items_summary))) {
+  itm <- violating_items_summary$Item[i]
+  max_q3 <- q3_violations %>%
+    filter(Item1 == itm | Item2 == itm) %>%
+    summarise(m = max(Q3_Correlation)) %>%
+    pull(m)
+  violating_items_summary$Max_Q3_Value[i] <- round(max_q3, 4)
+}
+
+# ============================================================
+# 4. PRINT DIAGNOSTIC RESULTS TO CONSOLE
+ 
+cat("==================================================================\n")
+cat("LOCAL INDEPENDENCE VIOLATION SUMMARY (Cutoff: Q3 >", q3_cutoff, ")\n")
+cat("==================================================================\n\n")
+
+cat("Total Item Pairs Evaluated:            ", nrow(q3_long), "\n")
+cat("Total Dependent Pairs (Q3 > 0.20):     ", nrow(q3_violations), "\n")
+cat("Total Unique Flagged Items:            ", nrow(violating_items_summary), "\n\n")
+
+cat("--- TOP FLAGGED ITEMS RANKED BY VIOLATION FREQUENCY ---\n")
+if (nrow(violating_items_summary) > 0) {
+  # Only print the top 15 worst items to keep the console clean
+  print(knitr::kable(head(violating_items_summary, 15)))
+  cat("\n(Note: The full list of items and all violating pairs have been exported to Excel.)\n")
+} else {
+  cat("No items flagged.\n")
+}
+
+# ==============================================================================
+# 5. EXPORT RESULTS TO EXCEL FOR ITEM SELECTION & PRUNING
+
+wb_q3 <- createWorkbook()
+
+# Sheet 1: Item-Level Violation Counts (Prioritize which items to drop first)
+addWorksheet(wb_q3, "Flagged_Items_Summary")
+writeDataTable(wb_q3, "Flagged_Items_Summary", violating_items_summary, tableStyle = "TableStyleMedium9")
+setColWidths(wb_q3, "Flagged_Items_Summary", cols = 1:ncol(violating_items_summary), widths = "auto")
+
+# Sheet 2: All Violating Pairs (Q3 > 0.20)
+addWorksheet(wb_q3, "Violating_Pairs_Q3_over_0.20")
+writeDataTable(wb_q3, "Violating_Pairs_Q3_over_0.20", q3_violations, tableStyle = "TableStyleMedium2")
+setColWidths(wb_q3, "Violating_Pairs_Q3_over_0.20", cols = 1:ncol(q3_violations), widths = "auto")
+
+# Sheet 3: Full Ranked Q3 Correlations Matrix (Long)
+addWorksheet(wb_q3, "All_Q3_Pairs_Ranked")
+writeDataTable(wb_q3, "All_Q3_Pairs_Ranked", q3_long, tableStyle = "TableStyleLight1")
+setColWidths(wb_q3, "All_Q3_Pairs_Ranked", cols = 1:ncol(q3_long), widths = "auto")
+
+excel_q3_out <- "IRT_Local_Independence_Q3_Violations.xlsx"
+saveWorkbook(wb_q3, excel_q3_out, overwrite = TRUE)
+
+cat("\n==================================================================\n")
+cat("SUCCESS! Q3 local independence analysis saved to:\n", excel_q3_out, "\n")
+cat("==================================================================\n")
+```
+
+## 5. Compare performance of the models
+
+### Evaluating the Results
+
+|  |  |  |
+|----|----|----|
+| **Statistic** | **Good Fit Threshold** | **What it Tells You** |
+| **RMSEA** | $< 0.06$ (acceptable $< 0.08$) | Root Mean Square Error of Approximation; indicates closeness to unidimensional fit. |
+| **CFI / TLI** | $> 0.95$ (acceptable $> 0.90$) | Comparative Fit Index / Tucker-Lewis Index; values above $0.95$ strongly support a single dimension. |
+| **AIC / BIC** | **Lowest Value** Wins | Penalizes model complexity. Select the model with the lowest AIC/BIC. |
+| $p$-value (LRT) | $p < 0.05$ | If significant when comparing 1PL vs 2PL, freeing discrimination parameters (2PL) significantly improves fit. |
+| **Q3 Violations** | Pairwise $Q_3 < 0.20$ | Residual correlations above $0.20$ point to pairs of items that violate local independence (suggesting secondary dimensions). |
+
+```{r}
+ 
+# 1. Verify convergence for all three models (Should all return TRUE)
+cat("Rasch Converged:", extract.mirt(fit_rasch, 'converged'), "\n")
+cat("1PL Converged:  ", extract.mirt(fit_1pl, 'converged'), "\n")
+cat("2PL Converged:  ", extract.mirt(fit_2pl, 'converged'), "\n\n")
+
+# 2. Compare Model Fit via Likelihood Ratio Test (ANOVA)
+# Nested comparison: Rasch (slopes = 1) vs 1PL (common slope) vs 2PL (unique slopes)
+model_comp <- anova(fit_rasch, fit_1pl, fit_2pl)
+
+# 3. Format and display with kable
+kable(model_comp, caption = "Model Fit Comparison: Rasch vs 1PL vs 2PL")
+```
+
+### Compare Item Discrimination & Difficulty Parameters
+
+```{r}
+# Extract item parameters across models
+pars_rasch <- coef(fit_rasch, IRTpars = TRUE, simplify = TRUE)$items
+pars_1pl   <- coef(fit_1pl,   IRTpars = TRUE, simplify = TRUE)$items
+pars_2pl   <- coef(fit_2pl,   IRTpars = TRUE, simplify = TRUE)$items
+
+# Combine into a comparative data frame
+item_comparison <- data.frame(
+  Item             = rownames(pars_rasch),
+  Rasch_a          = pars_rasch[, "a"],
+  Rasch_b          = pars_rasch[, "b"],
+  `1PL_a`          = pars_1pl[, "a"],
+  `1PL_b`          = pars_1pl[, "b"],
+  `2PL_a`          = pars_2pl[, "a"],
+  `2PL_b`          = pars_2pl[, "b"]
+)
+```
+
+### Extract & Merge Person Theta ($\theta$) Scores for All 3 Models
+
+```{r}
+# 1. Extract raw EAP theta vectors from each fitted model
+scores_rasch <- as.numeric(fscores(fit_rasch, method = "EAP")[, "F1"])
+scores_1pl   <- as.numeric(fscores(fit_1pl,   method = "EAP")[, "F1"])
+scores_2pl   <- as.numeric(fscores(fit_2pl,   method = "EAP")[, "F1"])
+
+# 2. Identify the exact row positions scored by mirt
+# (Uses clean_matrix to find rows with valid responses and non-zero variance)
+scored_indices <- which(
+  rowSums(!is.na(clean_matrix)) > 0 & 
+  apply(clean_matrix, 1, var, na.rm = TRUE) > 0
+)
+
+# Safety fallback if length differs slightly
+if (length(scored_indices) != length(scores_2pl)) {
+  scored_indices <- which(rowSums(!is.na(clean_matrix)) > 0)[1:length(scores_2pl)]
+}
+
+# 3. Assign theta scores directly into Master Dataset (1:1 positional mapping)
+# Unscored/zero-variance rows cleanly receive NA
+CSNT_Item_Diversity_Scored_2025 <- CSNT_Item_Diversity_Scored_2025 %>%
+  dplyr::select(-any_of(c("Theta_Rasch", "Theta_1PL", "Theta_2PL"))) %>%
+  mutate(
+    Theta_Rasch = NA_real_,
+    Theta_1PL   = NA_real_,
+    Theta_2PL   = NA_real_
+  )
+
+CSNT_Item_Diversity_Scored_2025$Theta_Rasch[scored_indices] <- scores_rasch
+CSNT_Item_Diversity_Scored_2025$Theta_1PL[scored_indices]   <- scores_1pl
+CSNT_Item_Diversity_Scored_2025$Theta_2PL[scored_indices]   <- scores_2pl
+
+# 4. Check correlation among person abilities across models
+theta_correlations <- cor(
+  CSNT_Item_Diversity_Scored_2025 %>% 
+    dplyr::select(Theta_Rasch, Theta_1PL, Theta_2PL), 
+  use = "pairwise.complete.obs"
+)
+
+cat("\n=== CORRELATION AMONG PERSON THETA ESTIMATES ===\n")
+print(round(theta_correlations, 4))
+```
+
+Matching with ID key again to check for any changes
+
+fielddata(subjectID) to UserID
+
+ITem Deifficulty COmparison
+
+```{r}
+# ===================================================================
+# 1. SUMMARY COMPARISON OF AVERAGE ITEM DIFFICULTY (RASCH vs 1PL vs 2PL)
+
+b_rasch <- rasch_item_summary$Difficulty_b
+b_1pl   <- summary_1pl$Difficulty_b
+b_2pl   <- summary_2pl$Difficulty_b
+
+irt_model_comparison <- tibble::tibble(
+  Model = c("Rasch Model", "1PL Model", "2PL Model"),
+  Total_Items = c(length(b_rasch), length(b_1pl), length(b_2pl)),
+  Mean_Difficulty_b = c(
+    round(mean(b_rasch, na.rm = TRUE), 4),
+    round(mean(b_1pl, na.rm = TRUE), 4),
+    round(mean(b_2pl, na.rm = TRUE), 4)
+  ),
+  SD_Difficulty = c(
+    round(sd(b_rasch, na.rm = TRUE), 4),
+    round(sd(b_1pl, na.rm = TRUE), 4),
+    round(sd(b_2pl, na.rm = TRUE), 4)
+  ),
+  Min_Difficulty = c(
+    round(min(b_rasch, na.rm = TRUE), 4),
+    round(min(b_1pl, na.rm = TRUE), 4),
+    round(min(b_2pl, na.rm = TRUE), 4)
+  ),
+  Max_Difficulty = c(
+    round(max(b_rasch, na.rm = TRUE), 4),
+    round(max(b_1pl, na.rm = TRUE), 4),
+    round(max(b_2pl, na.rm = TRUE), 4)
+  ),
+  Median_Difficulty = c(
+    round(median(b_rasch, na.rm = TRUE), 4),
+    round(median(b_1pl, na.rm = TRUE), 4),
+    round(median(b_2pl, na.rm = TRUE), 4)
+  )
+)
+
+# ===================================================================
+# 2. ITEM-BY-ITEM COMPARISON TABLE (Safe Join by Item ID)
+
+item_level_comparison <- rasch_item_summary %>%
+  dplyr::select(Item, Rasch_b = Difficulty_b) %>%
+  dplyr::full_join(
+    summary_1pl %>% dplyr::select(Item, PL1_b = Difficulty_b),
+    by = "Item"
+  ) %>%
+  dplyr::full_join(
+    summary_2pl %>% dplyr::select(Item, PL2_b = Difficulty_b),
+    by = "Item"
+  ) %>%
+  dplyr::mutate(
+    Rasch_b           = round(Rasch_b, 4),
+    PL1_b             = round(PL1_b, 4),
+    PL2_b             = round(PL2_b, 4),
+    Diff_1PL_vs_Rasch = round(PL1_b - Rasch_b, 4),
+    Diff_2PL_vs_1PL   = round(PL2_b - PL1_b, 4)
+  )
+
+# ===================================================================
+# 3. DISPLAY FORMATTED PREVIEW TABLES
+
+cat("=== AVERAGE ITEM DIFFICULTY COMPARISON TABLE ===\n\n")
+print(knitr::kable(irt_model_comparison))
+
+cat("\n=== FIRST 10 ITEMS COMPARISON PREVIEW ===\n\n")
+print(knitr::kable(head(item_level_comparison, 10)))
+
+# ===================================================================
+# 4. EXPORT TO EXCEL WORKBOOK
+
+wb_irt <- createWorkbook()
+
+addWorksheet(wb_irt, "Model_Average_Difficulty")
+writeDataTable(wb_irt, "Model_Average_Difficulty", irt_model_comparison, tableStyle = "TableStyleMedium9")
+setColWidths(wb_irt, "Model_Average_Difficulty", cols = 1:ncol(irt_model_comparison), widths = "auto")
+
+addWorksheet(wb_irt, "Item_By_Item_Difficulty")
+writeDataTable(wb_irt, "Item_By_Item_Difficulty", item_level_comparison, tableStyle = "TableStyleMedium2")
+setColWidths(wb_irt, "Item_By_Item_Difficulty", cols = 1:ncol(item_level_comparison), widths = "auto")
+
+excel_file <- "IRT_Rasch_1PL_2PL_Difficulty_Comparison.xlsx"
+saveWorkbook(wb_irt, excel_file, overwrite = TRUE)
+
+cat("\nSaved to Excel workbook:", excel_file, "\n")
+```
+
+## 6. Adverse Impact
+
+Adverse impact analysis has been carried out based on current percentiles to start with. Detailed analysis for all diversity groups has been performed using the new 1PL model estimation. 1PL was selected because it is the same model used at the moment and is the best performing model, though the other two (Rasch and 2PL) have very similar outcomes.
+
+6.  Frequencies of Diversity Groups
+
+```{r}
+# 1. Convert Master Dataset to a clean standard data.frame
+df_clean <- as.data.frame(CSNT_Item_Diversity_Scored_2025)
+
+demographic_vars <- c("gender", "select_your_ethnicity", "select_your_current_age_group", "disability", "application_form_applicant_type", "job_grade", "what_is_your_sexual_orientation", "were_you_eligible_for_free_school_meals_at_any_point", "what_is_your_religion_or_belief" ) # Replace/add your demographic column names 
+
+grade_var        <- "job_grade"            # Replace with your actual job grade column name
+
+# Helper function: Safely flattens a column if it is stored as a list
+clean_vector_col <- function(x) {
+  if (is.list(x)) {
+    sapply(x, function(val) {
+      if (is.null(val) || length(val) == 0 || all(is.na(val))) {
+        return(NA_character_)
+      } else {
+        return(as.character(val[[1]])) # Extract first scalar element
+      }
+    })
+  } else {
+    return(as.character(x))
+  }
+}
+
+# Clean grade column
+if (grade_var %in% colnames(df_clean)) {
+  df_clean[[grade_var]] <- clean_vector_col(df_clean[[grade_var]])
+}
+
+# ==============================================================================
+# 1. OVERALL DEMOGRAPHIC FREQUENCIES (TOTAL SAMPLE)
+
+cat("=== OVERALL DEMOGRAPHIC FREQUENCIES (N = ", nrow(df_clean), ") ===\n\n")
+
+for (demo in demographic_vars) {
+  if (demo %in% colnames(df_clean)) {
+    
+    # Flatten list-column if necessary
+    demo_vec <- clean_vector_col(df_clean[[demo]])
+    
+    overall_counts <- data.frame(Group = demo_vec, stringsAsFactors = FALSE) %>%
+      mutate(Group = ifelse(is.na(Group) | Group == "", "Missing/NA", Group)) %>%
+      group_by(Group) %>%
+      summarise(N = n(), .groups = "drop") %>%
+      mutate(
+        Percent = round((N / sum(N)) * 100, 2),
+        Cumulative_N = cumsum(N)
+      ) %>%
+      rename(!!sym(demo) := Group)
+    
+    print(kable(overall_counts, caption = paste("Overall Breakdown:", demo)))
+    cat("\n------------------------------------------------------------\n")
+  } else {
+    warning(paste("Variable", demo, "not found in master dataset!"))
+  }
+}
+
+# ==============================================================================
+# 2. DEMOGRAPHIC FREQUENCIES BY JOB GRADE (CROSS-TABULATION)
+
+cat("\n=== DEMOGRAPHIC FREQUENCIES BY JOB GRADE ===\n\n")
+
+for (demo in demographic_vars) {
+  if (demo %in% colnames(df_clean) && grade_var %in% colnames(df_clean)) {
+    
+    # Extract flattened character vectors
+    demo_clean_vec  <- clean_vector_col(df_clean[[demo]])
+    grade_clean_vec <- clean_vector_col(df_clean[[grade_var]])
+    
+    cross_tab_counts <- data.frame(
+      Grade = ifelse(is.na(grade_clean_vec) | grade_clean_vec == "", "Missing_Grade", grade_clean_vec),
+      Demo  = ifelse(is.na(demo_clean_vec) | demo_clean_vec == "", "Missing/NA", demo_clean_vec),
+      stringsAsFactors = FALSE
+    ) %>%
+      group_by(Grade, Demo) %>%
+      summarise(N = n(), .groups = "drop_last") %>%
+      mutate(Percent_Within_Grade = round((N / sum(N)) * 100, 2)) %>%
+      ungroup()
+    
+    # Pivot N Counts Table
+    counts_wide <- cross_tab_counts %>%
+      dplyr::select(Grade, Demo, N) %>%
+      pivot_wider(names_from = Demo, values_from = N, values_fill = 0) %>%
+      rename(!!sym(grade_var) := Grade)
+    
+    cat("\n--- Headcount Breakdown (N):", grade_var, "x", demo, "---\n")
+    print(kable(counts_wide))
+    
+    # Pivot Percentage Table
+    pct_wide <- cross_tab_counts %>%
+      dplyr::select(Grade, Demo, Percent_Within_Grade) %>%
+      pivot_wider(names_from = Demo, values_from = Percent_Within_Grade, values_fill = 0) %>%
+      rename(!!sym(grade_var) := Grade)
+    
+    cat("\n--- Percentage Breakdown (% within Grade):", grade_var, "x", demo, "---\n")
+    print(kable(pct_wide))
+    cat("\n------------------------------------------------------------\n")
+  }
+}
+```
+
+#### Current Percentile Overall Pass Rates per Grade
+
+```{r}
+clean_vector_col <- function(x) {
+  if (is.null(x)) return(NULL)
+  if (is.list(x)) {
+    sapply(x, function(val) {
+      if (is.null(val) || length(val) == 0 || all(is.na(val))) {
+        return(NA_character_)
+      } else {
+        return(as.character(val[[1]]))
+      }
+    })
+  } else {
+    return(as.character(x))
+  }
+}
+
+df_raw <- as.data.frame(CSNT_Item_Diversity_Scored_2025)
+
+# Detect grade column
+col_gx <- intersect(c("job_grade", "job_grade", "job_grades"), colnames(df_raw))[1]
+
+# Extract clean character vector directly
+df_pass_rates <- df_raw %>%
+  mutate(
+    job_grade_clean = clean_vector_col(.data[[col_gx]]),
+    status = ifelse(NRTPercentileScore >= 29, "Pass", "Fail")
+  )
+
+# Define exact targets as they exist in your dataset
+target_grades <- c(
+  "Administrative Officer",
+  "Executive Officer",
+  "Higher Executive Officer",
+  "Senior Executive Officer",
+  "Grade 7",
+  "Grade 6"
+)
+
+# Summarize directly on exact string matches
+pass_rate_summary <- df_pass_rates %>%
+  filter(job_grade_clean %in% target_grades, !is.na(status)) %>%
+  group_by(Job_Grade = job_grade_clean) %>%
+  summarise(
+    Total_Candidates = n(),
+    Pass_Count       = sum(status == "Pass"),
+    Fail_Count       = sum(status == "Fail"),
+    Pass_Rate_Pct    = round((sum(status == "Pass") / n()) * 100, 2),
+    Fail_Rate_Pct    = round((sum(status == "Fail") / n()) * 100, 2),
+    .groups          = "drop"
+  )
+
+# Print as clean tab-delimited text
+write.table(pass_rate_summary, sep = "\t", row.names = FALSE, quote = FALSE)
+```
+
+### 6.A Gender
+
+```{r}
+#| label: gender-adverse-impact-1pl
+#| message: false
+#| warning: false
+
+# 1. SETUP & FILTER DATASET
+target_grades <- c("Administrative Officer", "Executive Officer", "Higher Executive Office",
+                   "Senior Executive Office", "Grade7", "Grade 6")
+
+clean_vec <- function(x) {
+  if (is.list(x)) vapply(x, \(v) if (length(v) == 0 || all(is.na(v))) NA_character_ else as.character(v[[1]]), character(1))
+  else as.character(x)
+}
+
+gender_col <- intersect(c("gender", "Gender"), colnames(CSNT_Item_Diversity_Scored_2025))[1]
+if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
+}
+
+df_gender <- as.data.frame(CSNT_Item_Diversity_Scored_2025) %>%
+  dplyr::mutate(
+    grade = dplyr::case_when(
+      stringr::str_detect(clean_vec(job_grade), "(?i)Administrative Officer") ~ "Administrative Officer",
+      stringr::str_detect(clean_vec(job_grade), "(?i)Executive Officer")      ~ "Executive Officer",
+      stringr::str_detect(clean_vec(job_grade), "(?i)Higher Executive")       ~ "Higher Executive Office",
+      stringr::str_detect(clean_vec(job_grade), "(?i)Senior Executive")       ~ "Senior Executive Office",
+      stringr::str_detect(clean_vec(job_grade), "(?i)Grade ?7")               ~ "Grade7",
+      stringr::str_detect(clean_vec(job_grade), "(?i)Grade ?6")               ~ "Grade 6"
+    ),
+    gender = dplyr::case_when(
+      stringr::str_detect(stringr::str_trim(clean_vec(.data[[gender_col]])), "(?i)^(man|men|male|m|0)$")       ~ "Man",
+      stringr::str_detect(stringr::str_trim(clean_vec(.data[[gender_col]])), "(?i)^(woman|women|female|f|1)$") ~ "Woman"
+    )
+  ) %>%
+  dplyr::filter(!is.na(grade), !is.na(gender)) %>%
+  dplyr::mutate(
+    grade = factor(grade, levels = target_grades),
+    Percentile_1PL = pmax(1, ceiling(dplyr::percent_rank(Theta_1PL) * 100))
+  )
+
+# 2. VECTORIZED ADVERSE IMPACT GRID BUILDER
+build_ai_grid <- function(data, theta_col, pct_col) {
+  totals <- data %>%
+    dplyr::count(grade, gender, name = "total") %>%
+    tidyr::pivot_wider(names_from = gender, values_from = total, values_fill = 0)
+  
+  tidyr::expand_grid(grade = factor(target_grades, levels = target_grades), Percentile = 1:100, gender = c("Man", "Woman")) %>%
+    dplyr::left_join(
+      data %>% dplyr::group_by(grade, Percentile = .data[[pct_col]], gender) %>%
+        dplyr::summarise(n = dplyr::n(), avg_th = mean(.data[[theta_col]], na.rm = TRUE), .groups = "drop"),
+      by = c("grade", "Percentile", "gender")
+    ) %>%
+    dplyr::mutate(n = tidyr::replace_na(n, 0)) %>%
+    tidyr::pivot_wider(names_from = gender, values_from = c(n, avg_th)) %>%
+    dplyr::left_join(totals, by = "grade") %>%
+    dplyr::mutate(
+      Man   = tidyr::replace_na(Man, 0),
+      Woman = tidyr::replace_na(Woman, 0)
+    ) %>%
+    dplyr::group_by(grade) %>%
+    dplyr::arrange(dplyr::desc(Percentile), .by_group = TRUE) %>%
+    dplyr::mutate(
+      Man_Avg_Theta              = round(avg_th_Man, 4),
+      Woman_Avg_Theta            = round(avg_th_Woman, 4),
+      Theta_Diff_Woman_minus_Man = round(avg_th_Woman - avg_th_Man, 4),
+      Impact_Ratio_AIR           = round(
+        ifelse(Man >= 5 & Woman >= 5 & cumsum(n_Man) > 0, (cumsum(n_Woman) / Woman) / (cumsum(n_Man) / Man), NA_real_),
+        3
+      ),
+      Adverse_Impact_Flag        = dplyr::case_when(
+        Man < 5 | Woman < 5     ~ "Insufficient Data (n < 5)",
+        is.na(Impact_Ratio_AIR) ~ "N/A",
+        Impact_Ratio_AIR < 0.80 ~ "YES (AIR < 0.80)",
+        TRUE                    ~ "NO (AIR >= 0.80)"
+      )
+    ) %>%
+    dplyr::ungroup() %>%
+    dplyr::arrange(grade, Percentile) %>%
+    dplyr::select(grade, Percentile, Man_Count = n_Man, Woman_Count = n_Woman, Man_Avg_Theta, Woman_Avg_Theta, Theta_Diff_Woman_minus_Man, Impact_Ratio_AIR, Adverse_Impact_Flag) %>%
+    tidyr::pivot_wider(names_from = grade, values_from = -c(grade, Percentile), names_glue = "{gsub(' ', '_', grade)}_{.value}")
+}
+
+# 3. SUMMARIZE ADVERSE IMPACT ONSET PERCENTILE PER GRADE (1PL ONLY)
+grid_1pl <- build_ai_grid(df_gender, "Theta_1PL", "Percentile_1PL")
+
+grade_counts <- df_gender %>%
+  dplyr::count(grade, gender) %>%
+  tidyr::pivot_wider(names_from = gender, values_from = n, values_fill = 0)
+
+ai_onset_summary <- purrr::map_dfr(target_grades, \(g) {
+  prefix   <- gsub(" ", "_", g)
+  air_col  <- paste0(prefix, "_Impact_Ratio_AIR")
+  
+  n_man   <- grade_counts$Man[grade_counts$grade == g]
+  n_woman <- grade_counts$Woman[grade_counts$grade == g]
+  n_man   <- if (length(n_man) == 0) 0 else n_man
+  n_woman <- if (length(n_woman) == 0) 0 else n_woman
+  
+  insufficient <- (n_man < 5 | n_woman < 5)
+  ai_rows      <- grid_1pl %>% dplyr::filter(!is.na(.data[[air_col]]) & .data[[air_col]] < 0.80)
+  
+  tibble::tibble(
+    Model        = "1PL Theta",
+    Job_Grade    = g,
+    Man_n        = n_man,
+    Woman_n      = n_woman,
+    AI_Onset_Pct = dplyr::case_when(
+      insufficient      ~ "Insufficient data (n < 5)",
+      nrow(ai_rows) > 0 ~ paste0("Starts at ", min(ai_rows$Percentile), "th percentile"),
+      TRUE              ~ "No Adverse Impact"
+    ),
+    AIR_at_Onset = if (!insufficient && nrow(ai_rows) > 0) ai_rows[[air_col]][which.min(ai_rows$Percentile)] else NA_real_,
+    Min_AIR      = if (!insufficient) round(min(grid_1pl[[air_col]], na.rm = TRUE), 3) else NA_real_
+  )
+})
+
+# 4. EXPORT TO EXCEL & PRINT TABLE IN QUARTO
+sheets <- list(
+  "1PL_Theta_Gender_AI" = grid_1pl,
+  "AI_Onset_Summary"    = ai_onset_summary
+)
+
+wb_gender <- openxlsx::createWorkbook()
+invisible(purrr::imap(sheets, \(df, nm) {
+  openxlsx::addWorksheet(wb_gender, nm)
+  openxlsx::writeDataTable(wb_gender, nm, df)
+  openxlsx::setColWidths(wb_gender, nm, 1:ncol(df), "auto")
+}))
+openxlsx::saveWorkbook(wb_gender, "CSNT_Gender_Theta_Adverse_Impact_By_Percentile.xlsx", overwrite = TRUE)
+
+knitr::kable(ai_onset_summary)
+```
+
+There is no Adverse Impact for Gender in 1PL
+
+### 6.B Disability
+
+```{r}
+#| label: disability-adverse-impact-1pl
+#| message: false
+#| warning: false
+
+# 1. SETUP & FILTER DATASET (DISABILITY - 1PL ONLY)
+target_grades <- c("Administrative Officer", "Executive Officer", "Higher Executive Office",
+                   "Senior Executive Office", "Grade7", "Grade 6")
+
+min_n_threshold <- 5  # Minimum group size per percentile required to evaluate AIR reliably
+
+clean_vec <- function(x) {
+  if (is.list(x)) {
+    vapply(x, \(v) if (length(v) == 0 || all(is.na(v))) NA_character_ else as.character(v[[1]]), character(1))
+  } else {
+    as.character(x)
+  }
+}
+
+dis_col <- intersect(c("disability", "disability.y", "disability.x"), colnames(CSNT_Item_Diversity_Scored_2025))[1]
+stopifnot(!is.na(dis_col))
+
+if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
+}
+
+df_dis <- as.data.frame(CSNT_Item_Diversity_Scored_2025) %>%
+  dplyr::mutate(
+    Theta_1PL = as.numeric(Theta_1PL),
+    grade = dplyr::case_when(
+      stringr::str_detect(clean_vec(job_grade), "(?i)Administrative Officer") ~ "Administrative Officer",
+      stringr::str_detect(clean_vec(job_grade), "(?i)Executive Officer")      ~ "Executive Officer",
+      stringr::str_detect(clean_vec(job_grade), "(?i)Higher Executive")       ~ "Higher Executive Office",
+      stringr::str_detect(clean_vec(job_grade), "(?i)Senior Executive")       ~ "Senior Executive Office",
+      stringr::str_detect(clean_vec(job_grade), "(?i)Grade ?7")               ~ "Grade7",
+      stringr::str_detect(clean_vec(job_grade), "(?i)Grade ?6")               ~ "Grade 6"
+    ),
+    dis = dplyr::case_when(
+      stringr::str_detect(stringr::str_trim(clean_vec(.data[[dis_col]])), "(?i)^(no|non[- ]?disabled|0)$") ~ "No",
+      stringr::str_detect(stringr::str_trim(clean_vec(.data[[dis_col]])), "(?i)^(yes|disabled|1)$")        ~ "Yes"
+    )
+  ) %>%
+  dplyr::filter(!is.na(grade), !is.na(dis), !is.na(Theta_1PL)) %>%
+  dplyr::mutate(
+    grade          = factor(grade, levels = target_grades),
+    Percentile_1PL = pmax(1, ceiling(dplyr::percent_rank(Theta_1PL) * 100))
+  )
+
+# 2. VECTORIZED ADVERSE IMPACT GRID BUILDER (Strict < 5 Per-Percentile Guardrail)
+build_ai_grid_dis <- function(data, theta_col, pct_col) {
+  totals <- data %>%
+    dplyr::count(grade, dis, name = "total") %>%
+    tidyr::pivot_wider(names_from = dis, values_from = total, values_fill = 0)
+  
+  tidyr::expand_grid(
+    grade      = factor(target_grades, levels = target_grades),
+    Percentile = 1:100,
+    dis        = c("No", "Yes")
+  ) %>%
+    dplyr::left_join(
+      data %>%
+        dplyr::group_by(grade, Percentile = .data[[pct_col]], dis) %>%
+        dplyr::summarise(n = dplyr::n(), avg_th = mean(.data[[theta_col]], na.rm = TRUE), .groups = "drop"),
+      by = c("grade", "Percentile", "dis")
+    ) %>%
+    dplyr::mutate(n = tidyr::replace_na(n, 0)) %>%
+    tidyr::pivot_wider(names_from = dis, values_from = c(n, avg_th)) %>%
+    dplyr::left_join(totals, by = "grade") %>%
+    dplyr::mutate(
+      No  = tidyr::replace_na(No, 0L),
+      Yes = tidyr::replace_na(Yes, 0L)
+    ) %>%
+    dplyr::group_by(grade) %>%
+    dplyr::arrange(dplyr::desc(Percentile), .by_group = TRUE) %>%
+    dplyr::mutate(
+      cum_No  = cumsum(n_No),
+      cum_Yes = cumsum(n_Yes),
+      has_enough_data = !is.na(No) & !is.na(Yes) &
+                        No >= min_n_threshold & Yes >= min_n_threshold &
+                        n_No >= min_n_threshold & n_Yes >= min_n_threshold &
+                        cum_No >= min_n_threshold & cum_Yes >= min_n_threshold,
+      No_Avg_Theta            = ifelse(n_No >= min_n_threshold, round(avg_th_No, 4), NA_real_),
+      Yes_Avg_Theta           = ifelse(n_Yes >= min_n_threshold, round(avg_th_Yes, 4), NA_real_),
+      Theta_Diff_Yes_minus_No = ifelse(
+        n_No >= min_n_threshold & n_Yes >= min_n_threshold,
+        round(avg_th_Yes - avg_th_No, 4),
+        NA_real_
+      ),
+      Impact_Ratio_AIR        = ifelse(
+        has_enough_data,
+        round((cum_Yes / Yes) / (cum_No / No), 3),
+        NA_real_
+      ),
+      Adverse_Impact_Flag     = dplyr::case_when(
+        !has_enough_data        ~ "Insufficient Data",
+        Impact_Ratio_AIR < 0.80 ~ "YES (AIR < 0.80)",
+        TRUE                    ~ "NO (AIR >= 0.80)"
+      )
+    ) %>%
+    dplyr::ungroup() %>%
+    dplyr::arrange(grade, Percentile) %>%
+    dplyr::select(
+      grade, Percentile,
+      No_Count = n_No, Yes_Count = n_Yes,
+      No_Avg_Theta, Yes_Avg_Theta, Theta_Diff_Yes_minus_No,
+      Impact_Ratio_AIR, Adverse_Impact_Flag
+    ) %>%
+    tidyr::pivot_wider(
+      names_from  = grade,
+      values_from = -c(grade, Percentile),
+      names_glue  = "{gsub(' ', '_', grade)}_{.value}"
+    )
+}
+
+# 3. SUMMARIZE ADVERSE IMPACT ONSET PERCENTILE PER GRADE (Handling Insufficient Data Cleanly)
+grid_1pl_dis <- build_ai_grid_dis(df_dis, "Theta_1PL", "Percentile_1PL")
+
+ai_onset_dis <- purrr::map_dfr(target_grades, \(g) {
+  prefix   <- gsub(" ", "_", g)
+  air_col  <- paste0(prefix, "_Impact_Ratio_AIR")
+  flag_col <- paste0(prefix, "_Adverse_Impact_Flag")
+  
+  valid_rows <- grid_1pl_dis %>% dplyr::filter(.data[[flag_col]] != "Insufficient Data")
+  ai_rows    <- valid_rows %>% dplyr::filter(.data[[air_col]] < 0.80)
+  insuff_pct <- grid_1pl_dis %>% dplyr::filter(.data[[flag_col]] == "Insufficient Data") %>% dplyr::pull(Percentile)
+  
+  onset_text <- if (nrow(valid_rows) == 0) {
+    "Insufficient Data"
+  } else if (nrow(ai_rows) > 0) {
+    paste0("Starts at ", min(ai_rows$Percentile), "th percentile")
+  } else {
+    "No Adverse Impact"
+  }
+  
+  tibble::tibble(
+    Model             = "1PL Theta",
+    Job_Grade         = g,
+    AI_Onset_Pct      = onset_text,
+    AIR_at_Onset      = if (nrow(ai_rows) > 0) ai_rows[[air_col]][which.min(ai_rows$Percentile)] else NA_real_,
+    Min_Valid_AIR     = if (nrow(valid_rows) > 0) round(min(valid_rows[[air_col]], na.rm = TRUE), 3) else NA_real_,
+    Insufficient_Pcts = if (length(insuff_pct) > 0) paste0(min(insuff_pct), "th–", max(insuff_pct), "th pct") else "None"
+  )
+})
+
+# 4. EXPORT TO EXCEL & PRINT TABLE IN QUARTO
+sheets_dis <- list(
+  "1PL_Theta_Disability_AI" = grid_1pl_dis,
+  "AI_Onset_Summary"        = ai_onset_dis
+)
+
+wb_dis <- openxlsx::createWorkbook()
+invisible(purrr::imap(sheets_dis, \(df, nm) {
+  openxlsx::addWorksheet(wb_dis, nm)
+  openxlsx::writeDataTable(wb_dis, nm, df)
+  openxlsx::setColWidths(wb_dis, nm, 1:ncol(df), "auto")
+}))
+openxlsx::saveWorkbook(wb_dis, "CSNT_JobGrade_Disability_Theta_Adverse_Impact_By_Percentile.xlsx", overwrite = TRUE)
+
+knitr::kable(ai_onset_dis)
+```
+
+No adverse impact is present for Disability. Insufficient Data is presented where the number of persons per group is lower than 5.
+
+### 6.C Ethnicity
+
+```{r}
+# 1. SETUP & FILTER DATASET (ETHNICITY - 1PL ONLY)
+target_grades <- c("Administrative Officer", "Executive Officer", "Higher Executive Office",
+                   "Senior Executive Office", "Grade7", "Grade 6")
+
+focal_ethnicities <- c(
+  "Asian / Asian British",
+  "Black / African / Caribbean / Black British",
+  "Mixed / multiple ethnic groups",
+  "Other ethnic group"
+)
+
+min_n_threshold <- 5  # Minimum group size required to evaluate AIR reliably (< 5 -> Insufficient Data)
+
+clean_vec <- function(x) {
+  if (is.list(x)) {
+    vapply(x, \(v) if (length(v) == 0 || all(is.na(v))) NA_character_ else as.character(v[[1]]), character(1))
+  } else {
+    x
+  }
+}
+
+eth_col <- intersect(c("select_your_ethnic_group", "select_your_ethnic_group.y", "select_your_ethnic_group.x"), 
+                     colnames(CSNT_Item_Diversity_Scored_2025))[1]
+stopifnot(!is.na(eth_col))
+
+if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
+}
+
+# Flatten ALL list-columns upfront and coerce Theta_1PL to numeric
+df_raw <- as.data.frame(CSNT_Item_Diversity_Scored_2025) %>%
+  mutate(
+    across(where(is.list), clean_vec),
+    Theta_1PL = as.numeric(Theta_1PL)
+  )
+
+df_eth <- df_raw %>%
+  mutate(
+    grade = case_when(
+      str_detect(as.character(job_grade), "(?i)Administrative Officer") ~ "Administrative Officer",
+      str_detect(as.character(job_grade), "(?i)Executive Officer")      ~ "Executive Officer",
+      str_detect(as.character(job_grade), "(?i)Higher Executive")       ~ "Higher Executive Office",
+      str_detect(as.character(job_grade), "(?i)Senior Executive")       ~ "Senior Executive Office",
+      str_detect(as.character(job_grade), "(?i)Grade ?7")               ~ "Grade7",
+      str_detect(as.character(job_grade), "(?i)Grade ?6")               ~ "Grade 6"
+    ),
+    eth_raw = str_trim(as.character(.data[[eth_col]])),
+    eth = case_when(
+      str_detect(eth_raw, "(?i)^white") ~ "White",
+      eth_raw %in% focal_ethnicities | str_detect(eth_raw, "(?i)^(asian|black|mixed|other ethnic)") ~ "Others",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(grade), !is.na(eth), !is.na(Theta_1PL)) %>%
+  mutate(
+    grade          = factor(grade, levels = target_grades),
+    Percentile_1PL = pmax(1, ceiling(percent_rank(Theta_1PL) * 100))
+  )
+
+# 2. VECTORIZED ADVERSE IMPACT GRID BUILDER (Strict < 5 Guardrail)
+build_ai_grid_eth <- function(data, theta_col, pct_col) {
+  totals <- data %>% 
+    dplyr::count(grade, eth, name = "total") %>% 
+    pivot_wider(names_from = eth, values_from = total, values_fill = 0)
+  
+  tidyr::expand_grid(
+    grade      = factor(target_grades, levels = target_grades), 
+    Percentile = 1:100, 
+    eth        = c("White", "Others")
+  ) %>%
+    left_join(
+      data %>% 
+        group_by(grade, Percentile = .data[[pct_col]], eth) %>%
+        summarise(n = n(), avg_th = mean(.data[[theta_col]], na.rm = TRUE), .groups = "drop"),
+      by = c("grade", "Percentile", "eth")
+    ) %>%
+    mutate(n = replace_na(n, 0)) %>%
+    pivot_wider(names_from = eth, values_from = c(n, avg_th)) %>%
+    left_join(totals, by = "grade") %>%
+    mutate(
+      White  = replace_na(White, 0L),
+      Others = replace_na(Others, 0L)
+    ) %>%
+    group_by(grade) %>%
+    arrange(desc(Percentile), .by_group = TRUE) %>%
+    mutate(
+      cum_White  = cumsum(n_White),
+      cum_Others = cumsum(n_Others),
+      has_enough_data = !is.na(White) & !is.na(Others) &
+                        White >= min_n_threshold & Others >= min_n_threshold &
+                        n_White >= min_n_threshold & n_Others >= min_n_threshold &
+                        cum_White >= min_n_threshold & cum_Others >= min_n_threshold,
+      White_Avg_Theta              = ifelse(n_White >= min_n_threshold, round(avg_th_White, 4), NA_real_),
+      Others_Avg_Theta             = ifelse(n_Others >= min_n_threshold, round(avg_th_Others, 4), NA_real_),
+      Theta_Diff_Others_minus_Wht  = ifelse(
+        n_White >= min_n_threshold & n_Others >= min_n_threshold, 
+        round(avg_th_Others - avg_th_White, 4), 
+        NA_real_
+      ),
+      Impact_Ratio_AIR             = ifelse(
+        has_enough_data, 
+        round((cum_Others / Others) / (cum_White / White), 3), 
+        NA_real_
+      ),
+      Adverse_Impact_Flag          = case_when(
+        !has_enough_data        ~ "Insufficient Data",
+        Impact_Ratio_AIR < 0.80 ~ "YES (AIR < 0.80)",
+        TRUE                    ~ "NO (AIR >= 0.80)"
+      )
+    ) %>%
+    ungroup() %>%
+    arrange(grade, Percentile) %>%
+    select(grade, Percentile, White_Count = n_White, Others_Count = n_Others, 
+           White_Avg_Theta, Others_Avg_Theta, Theta_Diff_Others_minus_Wht, 
+           Impact_Ratio_AIR, Adverse_Impact_Flag) %>%
+    pivot_wider(names_from = grade, values_from = -c(grade, Percentile), names_glue = "{gsub(' ', '_', grade)}_{.value}")
+}
+
+# 3. SUMMARIZE ADVERSE IMPACT ONSET PERCENTILE (Handling Insufficient Data cleanly)
+summarize_ai_onset_eth <- function(grid_df, model_label = "1PL Theta") {
+  map_dfr(target_grades, \(g) {
+    prefix   <- gsub(" ", "_", g)
+    air_col  <- paste0(prefix, "_Impact_Ratio_AIR")
+    flag_col <- paste0(prefix, "_Adverse_Impact_Flag")
+    
+    valid_rows <- grid_df %>% filter(.data[[flag_col]] != "Insufficient Data")
+    ai_rows    <- valid_rows %>% filter(.data[[air_col]] < 0.80)
+    insuff_pct <- grid_df %>% filter(.data[[flag_col]] == "Insufficient Data") %>% pull(Percentile)
+    
+    onset_text <- if (nrow(valid_rows) == 0) {
+      "Insufficient Data"
+    } else if (nrow(ai_rows) > 0) {
+      paste0("Starts at ", min(ai_rows$Percentile), "th percentile")
+    } else {
+      "No Adverse Impact"
+    }
+    
+    tibble(
+      Model             = model_label,
+      Job_Grade         = g,
+      AI_Onset_Pct      = onset_text,
+      AIR_at_Onset      = if (nrow(ai_rows) > 0) ai_rows[[air_col]][which.min(ai_rows$Percentile)] else NA_real_,
+      Min_Valid_AIR     = if (nrow(valid_rows) > 0) round(min(valid_rows[[air_col]], na.rm = TRUE), 3) else NA_real_,
+      Insufficient_Pcts = if (length(insuff_pct) > 0) paste0(min(insuff_pct), "th–", max(insuff_pct), "th pct") else "None"
+    )
+  })
+}
+
+# 4. GENERATE TABLES, DISPLAY ONSET SUMMARY & EXPORT TO EXCEL
+ai_grid_eth_1pl <- build_ai_grid_eth(df_eth, "Theta_1PL", "Percentile_1PL")
+ai_onset_eth    <- summarize_ai_onset_eth(ai_grid_eth_1pl, "1PL Theta")
+
+print(knitr::kable(ai_onset_eth))
+
+sheets_eth <- list(
+  "1PL_Theta_Ethnicity_AI" = ai_grid_eth_1pl,
+  "AI_Onset_Summary"       = ai_onset_eth
+)
+
+wb_eth <- createWorkbook()
+invisible(imap(sheets_eth, \(df, nm) {
+  addWorksheet(wb_eth, nm)
+  writeDataTable(wb_eth, nm, df)
+  setColWidths(wb_eth, nm, 1:ncol(df), "auto")
+}))
+saveWorkbook(wb_eth, "CSNT_Ethnicity_Theta_Adverse_Impact_By_Percentile.xlsx", overwrite = TRUE)
+```
+
+Adverse impact for ethnicity starts at 19th percentile for Grade 6 and, 91th percentile for Administrative officer. However, there is no sufficient information regarding Grade 6. So, adverse impact calculation is not valid.
+
+### 6.D Sexual Orientation
+
+```{r}
+# 1. SETUP & FILTER DATASET (SEXUAL ORIENTATION - 1PL ONLY)
+target_grades <- c("Administrative Officer", "Executive Officer", "Higher Executive Office",
+                   "Senior Executive Office", "Grade7", "Grade 6")
+
+focal_orientations <- c("Bisexual", "Gay or lesbian", "Prefer to self-describe")
+min_n_threshold <- 5  # Minimum group size required to evaluate AIR reliably (< 5 -> Insufficient Data)
+
+clean_vec <- function(x) {
+  if (is.list(x)) {
+    vapply(x, \(v) if (length(v) == 0 || all(is.na(v))) NA_character_ else as.character(v[[1]]), character(1))
+  } else {
+    x
+  }
+}
+
+so_col <- intersect(c("what_is_your_sexual_orientation", "what_is_your_sexual_orientation.y", "what_is_your_sexual_orientation.x"),
+                     colnames(CSNT_Item_Diversity_Scored_2025))[1]
+stopifnot(!is.na(so_col))
+
+if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
+}
+
+# Flatten ALL list-columns upfront and coerce Theta_1PL to numeric
+df_raw <- as.data.frame(CSNT_Item_Diversity_Scored_2025) %>%
+  mutate(
+    across(where(is.list), clean_vec),
+    Theta_1PL = as.numeric(Theta_1PL)
+  )
+
+df_so <- df_raw %>%
+  mutate(
+    grade = case_when(
+      str_detect(as.character(job_grade), "(?i)Administrative Officer") ~ "Administrative Officer",
+      str_detect(as.character(job_grade), "(?i)Executive Officer")      ~ "Executive Officer",
+      str_detect(as.character(job_grade), "(?i)Higher Executive")       ~ "Higher Executive Office",
+      str_detect(as.character(job_grade), "(?i)Senior Executive")       ~ "Senior Executive Office",
+      str_detect(as.character(job_grade), "(?i)Grade ?7")               ~ "Grade7",
+      str_detect(as.character(job_grade), "(?i)Grade ?6")               ~ "Grade 6"
+    ),
+    so_raw = str_trim(as.character(.data[[so_col]])),
+    so = case_when(
+      str_detect(so_raw, "(?i)^heterosexual") ~ "Heterosexual",
+      so_raw %in% focal_orientations | str_detect(so_raw, "(?i)^(bisexual|gay|lesbian|prefer to self)") ~ "Other",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(grade), !is.na(so), !is.na(Theta_1PL)) %>%
+  mutate(
+    grade          = factor(grade, levels = target_grades),
+    Percentile_1PL = pmax(1, ceiling(percent_rank(Theta_1PL) * 100))
+  )
+
+# 2. VECTORIZED ADVERSE IMPACT GRID BUILDER (Strict < 5 Guardrail)
+build_ai_grid_so <- function(data, theta_col, pct_col) {
+  totals <- data %>% 
+    dplyr::count(grade, so, name = "total") %>% 
+    pivot_wider(names_from = so, values_from = total, values_fill = 0)
+  
+  tidyr::expand_grid(
+    grade      = factor(target_grades, levels = target_grades), 
+    Percentile = 1:100, 
+    so         = c("Heterosexual", "Other")
+  ) %>%
+    left_join(
+      data %>% 
+        group_by(grade, Percentile = .data[[pct_col]], so) %>%
+        summarise(n = n(), avg_th = mean(.data[[theta_col]], na.rm = TRUE), .groups = "drop"),
+      by = c("grade", "Percentile", "so")
+    ) %>%
+    mutate(n = replace_na(n, 0)) %>%
+    pivot_wider(names_from = so, values_from = c(n, avg_th)) %>%
+    left_join(totals, by = "grade") %>%
+    mutate(
+      Heterosexual = replace_na(Heterosexual, 0L),
+      Other        = replace_na(Other, 0L)
+    ) %>%
+    group_by(grade) %>%
+    arrange(desc(Percentile), .by_group = TRUE) %>%
+    mutate(
+      cum_Het = cumsum(n_Heterosexual),
+      cum_Oth = cumsum(n_Other),
+      has_enough_data = !is.na(Heterosexual) & !is.na(Other) &
+                        Heterosexual >= min_n_threshold & Other >= min_n_threshold &
+                        n_Heterosexual >= min_n_threshold & n_Other >= min_n_threshold &
+                        cum_Het >= min_n_threshold & cum_Oth >= min_n_threshold,
+      Het_Avg_Theta              = ifelse(n_Heterosexual >= min_n_threshold, round(avg_th_Heterosexual, 4), NA_real_),
+      Other_Avg_Theta            = ifelse(n_Other >= min_n_threshold, round(avg_th_Other, 4), NA_real_),
+      Theta_Diff_Other_minus_Het = ifelse(
+        n_Heterosexual >= min_n_threshold & n_Other >= min_n_threshold, 
+        round(avg_th_Other - avg_th_Heterosexual, 4), 
+        NA_real_
+      ),
+      Impact_Ratio_AIR           = ifelse(
+        has_enough_data, 
+        round((cum_Oth / Other) / (cum_Het / Heterosexual), 3), 
+        NA_real_
+      ),
+      Adverse_Impact_Flag        = case_when(
+        !has_enough_data        ~ "Insufficient Data",
+        Impact_Ratio_AIR < 0.80 ~ "YES (AIR < 0.80)",
+        TRUE                    ~ "NO (AIR >= 0.80)"
+      )
+    ) %>%
+    ungroup() %>%
+    arrange(grade, Percentile) %>%
+    select(grade, Percentile, Het_Count = n_Heterosexual, Other_Count = n_Other, 
+           Het_Avg_Theta, Other_Avg_Theta, Theta_Diff_Other_minus_Het, 
+           Impact_Ratio_AIR, Adverse_Impact_Flag) %>%
+    pivot_wider(names_from = grade, values_from = -c(grade, Percentile), names_glue = "{gsub(' ', '_', grade)}_{.value}")
+}
+
+# 3. SUMMARIZE ADVERSE IMPACT ONSET PERCENTILE (Handling Insufficient Data cleanly)
+summarize_ai_onset_so <- function(grid_df, model_label = "1PL Theta") {
+  map_dfr(target_grades, \(g) {
+    prefix   <- gsub(" ", "_", g)
+    air_col  <- paste0(prefix, "_Impact_Ratio_AIR")
+    flag_col <- paste0(prefix, "_Adverse_Impact_Flag")
+    
+    valid_rows <- grid_df %>% filter(.data[[flag_col]] != "Insufficient Data")
+    ai_rows    <- valid_rows %>% filter(.data[[air_col]] < 0.80)
+    insuff_pct <- grid_df %>% filter(.data[[flag_col]] == "Insufficient Data") %>% pull(Percentile)
+    
+    onset_text <- if (nrow(valid_rows) == 0) {
+      "Insufficient Data"
+    } else if (nrow(ai_rows) > 0) {
+      paste0("Starts at ", min(ai_rows$Percentile), "th percentile")
+    } else {
+      "No Adverse Impact"
+    }
+    
+    tibble(
+      Model             = model_label,
+      Job_Grade         = g,
+      AI_Onset_Pct      = onset_text,
+      AIR_at_Onset      = if (nrow(ai_rows) > 0) ai_rows[[air_col]][which.min(ai_rows$Percentile)] else NA_real_,
+      Min_Valid_AIR     = if (nrow(valid_rows) > 0) round(min(valid_rows[[air_col]], na.rm = TRUE), 3) else NA_real_,
+      Insufficient_Pcts = if (length(insuff_pct) > 0) paste0(min(insuff_pct), "th–", max(insuff_pct), "th pct") else "None"
+    )
+  })
+}
+
+# 4. GENERATE TABLES, DISPLAY ONSET SUMMARY & EXPORT TO EXCEL
+ai_grid_so_1pl <- build_ai_grid_so(df_so, "Theta_1PL", "Percentile_1PL")
+ai_onset_so    <- summarize_ai_onset_so(ai_grid_so_1pl, "1PL Theta")
+
+print(knitr::kable(ai_onset_so))
+
+sheets_so <- list(
+  "1PL_Theta_SexOrient_AI" = ai_grid_so_1pl,
+  "AI_Onset_Summary"       = ai_onset_so
+)
+
+wb_so <- createWorkbook()
+invisible(imap(sheets_so, \(df, nm) {
+  addWorksheet(wb_so, nm)
+  writeDataTable(wb_so, nm, df)
+  setColWidths(wb_so, nm, 1:ncol(df), "auto")
+}))
+saveWorkbook(wb_so, "CSNT_JobGrade_SexOrient_Theta_Adverse_Impact_By_Percentile.xlsx", overwrite = TRUE)
+```
+
+Where data is available, Adverse Impact starts at 89th percentile for Executive Officer. For others, there is no sufficient data for AI calculation.
+
+### 6.E Age
+
+```{r}
+# 1. SETUP & FILTER DATASET (AGE - 1PL ONLY)
+target_grades <- c("Administrative Officer", "Executive Officer", "Higher Executive Office",
+                   "Senior Executive Office", "Grade7", "Grade 6")
+
+min_n_threshold <- 5  # Minimum group size required at a cutoff to evaluate AIR reliably
+
+clean_vec <- function(x) {
+  if (is.list(x)) {
+    vapply(x, \(v) if (length(v) == 0 || all(is.na(v))) NA_character_ else as.character(v[[1]]), character(1))
+  } else {
+    x
+  }
+}
+
+age_col <- intersect(
+  c("select_your_current_age_group", "select_your_current_age_group.y", "select_your_current_age_group.x"),
+  colnames(CSNT_Item_Diversity_Scored_2025)
+)[1]
+stopifnot(!is.na(age_col))
+
+if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
+}
+
+# Flatten ALL list-columns upfront and coerce Theta_1PL to numeric
+df_raw <- as.data.frame(CSNT_Item_Diversity_Scored_2025) %>%
+  mutate(
+    across(where(is.list), clean_vec),
+    Theta_1PL = as.numeric(Theta_1PL)
+  )
+
+df_age <- df_raw %>%
+  mutate(
+    grade = case_when(
+      str_detect(as.character(job_grade), "(?i)Administrative Officer") ~ "Administrative Officer",
+      str_detect(as.character(job_grade), "(?i)Executive Officer")      ~ "Executive Officer",
+      str_detect(as.character(job_grade), "(?i)Higher Executive")       ~ "Higher Executive Office",
+      str_detect(as.character(job_grade), "(?i)Senior Executive")       ~ "Senior Executive Office",
+      str_detect(as.character(job_grade), "(?i)Grade ?7")               ~ "Grade7",
+      str_detect(as.character(job_grade), "(?i)Grade ?6")               ~ "Grade 6"
+    ),
+    age_raw = str_trim(as.character(.data[[age_col]])),
+    age_grp = case_when(
+      str_detect(age_raw, "^(16-24|25-29|30-34|35-39)$")             ~ "Under40",
+      str_detect(age_raw, "^(40-44|45-49|50-54|55-59|60-64|65\\+)$") ~ "40andOver",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(grade), !is.na(age_grp), !is.na(Theta_1PL)) %>%
+  mutate(
+    grade          = factor(grade, levels = target_grades),
+    Percentile_1PL = pmax(1, ceiling(percent_rank(Theta_1PL) * 100))
+  )
+
+# 2. VECTORIZED ADVERSE IMPACT GRID BUILDER (With Sparse-Data Guardrail)
+build_ai_grid_age <- function(data, theta_col, pct_col) {
+  totals <- data %>%
+    dplyr::count(grade, age_grp, name = "total") %>%
+    pivot_wider(names_from = age_grp, values_from = total, values_fill = 0)
+  
+  tidyr::expand_grid(
+    grade      = factor(target_grades, levels = target_grades),
+    Percentile = 1:100,
+    age_grp    = c("Under40", "40andOver")
+  ) %>%
+    left_join(
+      data %>%
+        group_by(grade, Percentile = .data[[pct_col]], age_grp) %>%
+        summarise(n = n(), avg_th = mean(.data[[theta_col]], na.rm = TRUE), .groups = "drop"),
+      by = c("grade", "Percentile", "age_grp")
+    ) %>%
+    mutate(n = replace_na(n, 0)) %>%
+    pivot_wider(names_from = age_grp, values_from = c(n, avg_th)) %>%
+    left_join(totals, by = "grade") %>%
+    group_by(grade) %>%
+    arrange(desc(Percentile), .by_group = TRUE) %>%
+    mutate(
+      cum_Under40   = cumsum(n_Under40),
+      cum_40andOver = cumsum(n_40andOver),
+      has_enough_data = Under40 >= min_n_threshold & `40andOver` >= min_n_threshold &
+                        cum_Under40 >= min_n_threshold & cum_40andOver >= min_n_threshold,
+      Under40_Avg_Theta                    = round(avg_th_Under40, 4),
+      `40andOver_Avg_Theta`                = round(avg_th_40andOver, 4),
+      `Theta_Diff_40andOver_minus_Under40` = round(avg_th_40andOver - avg_th_Under40, 4),
+      Impact_Ratio_AIR                     = ifelse(
+        has_enough_data,
+        round((cum_40andOver / `40andOver`) / (cum_Under40 / Under40), 3),
+        NA_real_
+      ),
+      Adverse_Impact_Flag = case_when(
+        !has_enough_data        ~ "Insufficient Data",
+        Impact_Ratio_AIR < 0.80 ~ "YES (AIR < 0.80)",
+        TRUE                    ~ "NO (AIR >= 0.80)"
+      )
+    ) %>%
+    ungroup() %>%
+    arrange(grade, Percentile) %>%
+    select(
+      grade, Percentile,
+      Under40_Count = n_Under40,
+      `40andOver_Count` = n_40andOver,
+      Under40_Avg_Theta,
+      `40andOver_Avg_Theta`,
+      `Theta_Diff_40andOver_minus_Under40`,
+      Impact_Ratio_AIR,
+      Adverse_Impact_Flag
+    ) %>%
+    pivot_wider(
+      names_from = grade,
+      values_from = -c(grade, Percentile),
+      names_glue = "{gsub(' ', '_', grade)}_{.value}"
+    )
+}
+
+# 3. SUMMARIZE ADVERSE IMPACT ONSET PERCENTILE (Handling Insufficient Data without min() warnings)
+summarize_ai_onset_age <- function(grid_df, model_label = "1PL Theta") {
+  map_dfr(target_grades, \(g) {
+    prefix   <- gsub(" ", "_", g)
+    air_col  <- paste0(prefix, "_Impact_Ratio_AIR")
+    flag_col <- paste0(prefix, "_Adverse_Impact_Flag")
+    
+    valid_rows <- grid_df %>% filter(.data[[flag_col]] != "Insufficient Data")
+    ai_rows    <- valid_rows %>% filter(.data[[air_col]] < 0.80)
+    insuff_pct <- grid_df %>% filter(.data[[flag_col]] == "Insufficient Data") %>% pull(Percentile)
+    
+    onset_text <- if (nrow(valid_rows) == 0) {
+      "Insufficient Data"
+    } else if (nrow(ai_rows) > 0) {
+      paste0("Starts at ", min(ai_rows$Percentile), "th percentile")
+    } else {
+      "No Adverse Impact"
+    }
+    
+    tibble(
+      Model             = model_label,
+      Job_Grade         = g,
+      AI_Onset_Pct      = onset_text,
+      AIR_at_Onset      = if (nrow(ai_rows) > 0) ai_rows[[air_col]][which.min(ai_rows$Percentile)] else NA_real_,
+      Min_Valid_AIR     = if (nrow(valid_rows) > 0) round(min(valid_rows[[air_col]], na.rm = TRUE), 3) else NA_real_,
+      Insufficient_Pcts = if (length(insuff_pct) > 0) paste0(min(insuff_pct), "th–", max(insuff_pct), "th pct") else "None"
+    )
+  })
+}
+# 4. GENERATE TABLES, DISPLAY ONSET SUMMARY & EXPORT TO EXCEL
+ai_grid_age_1pl <- build_ai_grid_age(df_age, "Theta_1PL", "Percentile_1PL")
+ai_onset_age    <- summarize_ai_onset_age(ai_grid_age_1pl, "1PL Theta")
+
+print(knitr::kable(ai_onset_age))
+
+sheets_age <- list(
+  "1PL_Theta_Age_AI" = ai_grid_age_1pl,
+  "AI_Onset_Summary" = ai_onset_age
+)
+
+wb_age <- createWorkbook()
+invisible(imap(sheets_age, \(df, nm) {
+  addWorksheet(wb_age, nm)
+  writeDataTable(wb_age, nm, df)
+  setColWidths(wb_age, nm, 1:ncol(df), "auto")
+}))
+saveWorkbook(wb_age, "CSNT_Age_Theta_Adverse_Impact_By_Percentile.xlsx", overwrite = TRUE)
+```
+
+Adverse Impact for age starts at 99th percentile for grade Executive Officer. There is not sufficient data for HEO, SEO, and Grade 6.
+
+### 6.F Religion
+
+```{r}
+# 1. SETUP & FILTER DATASET (RELIGION OR BELIEF - 1PL ONLY)
+target_grades <- c("Administrative Officer", "Executive Officer", "Higher Executive Office",
+                   "Senior Executive Office", "Grade7", "Grade 6")
+
+focal_religions <- c("No religion", "Muslim", "Hindu", "Sikh", "Other religion", "Buddhist", "Jewish")
+min_n_threshold <- 5  # Minimum group size required to evaluate AIR reliably (< 5 -> Insufficient Data)
+
+clean_vec <- function(x) {
+  if (is.list(x)) {
+    vapply(x, \(v) if (length(v) == 0 || all(is.na(v))) NA_character_ else as.character(v[[1]]), character(1))
+  } else {
+    x
+  }
+}
+
+rel_col <- intersect(
+  c("what_is_your_religion_or_belief", "what_is_your_religion_or_belief.y", "what_is_your_religion_or_belief.x"),
+  colnames(CSNT_Item_Diversity_Scored_2025)
+)[1]
+stopifnot(!is.na(rel_col))
+
+if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
+}
+
+# Flatten ALL list-columns upfront and coerce Theta_1PL to numeric
+df_raw <- as.data.frame(CSNT_Item_Diversity_Scored_2025) %>%
+  mutate(
+    across(where(is.list), clean_vec),
+    Theta_1PL = as.numeric(Theta_1PL)
+  )
+
+df_rel <- df_raw %>%
+  mutate(
+    grade = case_when(
+      str_detect(as.character(job_grade), "(?i)Administrative Officer") ~ "Administrative Officer",
+      str_detect(as.character(job_grade), "(?i)Executive Officer")      ~ "Executive Officer",
+      str_detect(as.character(job_grade), "(?i)Higher Executive")       ~ "Higher Executive Office",
+      str_detect(as.character(job_grade), "(?i)Senior Executive")       ~ "Senior Executive Office",
+      str_detect(as.character(job_grade), "(?i)Grade ?7")               ~ "Grade7",
+      str_detect(as.character(job_grade), "(?i)Grade ?6")               ~ "Grade 6"
+    ),
+    rel_raw = str_trim(as.character(.data[[rel_col]])),
+    rel_grp = case_when(
+      str_detect(rel_raw, "(?i)^christian$") ~ "Christian",
+      rel_raw %in% focal_religions |
+        str_detect(rel_raw, "(?i)^(no religion|muslim|hindu|sikh|other religion|buddhist|jewish)$") ~ "Other",
+      TRUE ~ NA_character_  # Excludes NAs, "Prefer not to disclose", etc.
+    )
+  ) %>%
+  filter(!is.na(grade), !is.na(rel_grp), !is.na(Theta_1PL)) %>%
+  mutate(
+    grade          = factor(grade, levels = target_grades),
+    Percentile_1PL = pmax(1, ceiling(percent_rank(Theta_1PL) * 100))
+  )
+
+# 2. VECTORIZED ADVERSE IMPACT GRID BUILDER (Strict < 5 Guardrail)
+build_ai_grid_rel <- function(data, theta_col, pct_col) {
+  totals <- data %>%
+    dplyr::count(grade, rel_grp, name = "total") %>%
+    pivot_wider(names_from = rel_grp, values_from = total, values_fill = 0)
+  
+  tidyr::expand_grid(
+    grade      = factor(target_grades, levels = target_grades),
+    Percentile = 1:100,
+    rel_grp    = c("Christian", "Other")
+  ) %>%
+    left_join(
+      data %>%
+        group_by(grade, Percentile = .data[[pct_col]], rel_grp) %>%
+        summarise(n = n(), avg_th = mean(.data[[theta_col]], na.rm = TRUE), .groups = "drop"),
+      by = c("grade", "Percentile", "rel_grp")
+    ) %>%
+    mutate(n = replace_na(n, 0)) %>%
+    pivot_wider(names_from = rel_grp, values_from = c(n, avg_th)) %>%
+    left_join(totals, by = "grade") %>%
+    mutate(
+      Christian = replace_na(Christian, 0L),
+      Other     = replace_na(Other, 0L)
+    ) %>%
+    group_by(grade) %>%
+    arrange(desc(Percentile), .by_group = TRUE) %>%
+    mutate(
+      cum_Christian = cumsum(n_Christian),
+      cum_Other     = cumsum(n_Other),
+      has_enough_data = !is.na(Christian) & !is.na(Other) &
+                        Christian >= min_n_threshold & Other >= min_n_threshold &
+                        n_Christian >= min_n_threshold & n_Other >= min_n_threshold &
+                        cum_Christian >= min_n_threshold & cum_Other >= min_n_threshold,
+      Christian_Avg_Theta              = ifelse(n_Christian >= min_n_threshold, round(avg_th_Christian, 4), NA_real_),
+      Other_Avg_Theta                  = ifelse(n_Other >= min_n_threshold, round(avg_th_Other, 4), NA_real_),
+      Theta_Diff_Other_minus_Christian = ifelse(
+        n_Christian >= min_n_threshold & n_Other >= min_n_threshold,
+        round(avg_th_Other - avg_th_Christian, 4),
+        NA_real_
+      ),
+      Impact_Ratio_AIR                 = ifelse(
+        has_enough_data,
+        round((cum_Other / Other) / (cum_Christian / Christian), 3),
+        NA_real_
+      ),
+      Adverse_Impact_Flag = case_when(
+        !has_enough_data        ~ "Insufficient Data",
+        Impact_Ratio_AIR < 0.80 ~ "YES (AIR < 0.80)",
+        TRUE                    ~ "NO (AIR >= 0.80)"
+      )
+    ) %>%
+    ungroup() %>%
+    arrange(grade, Percentile) %>%
+    select(
+      grade, Percentile,
+      Christian_Count = n_Christian,
+      Other_Count     = n_Other,
+      Christian_Avg_Theta,
+      Other_Avg_Theta,
+      Theta_Diff_Other_minus_Christian,
+      Impact_Ratio_AIR,
+      Adverse_Impact_Flag
+    ) %>%
+    pivot_wider(
+      names_from  = grade,
+      values_from = -c(grade, Percentile),
+      names_glue  = "{gsub(' ', '_', grade)}_{.value}"
+    )
+}
+
+# 3. SUMMARIZE ADVERSE IMPACT ONSET PERCENTILE (Handling Insufficient Data cleanly)
+summarize_ai_onset_rel <- function(grid_df, model_label = "1PL Theta") {
+  map_dfr(target_grades, \(g) {
+    prefix   <- gsub(" ", "_", g)
+    air_col  <- paste0(prefix, "_Impact_Ratio_AIR")
+    flag_col <- paste0(prefix, "_Adverse_Impact_Flag")
+    
+    valid_rows <- grid_df %>% filter(.data[[flag_col]] != "Insufficient Data")
+    ai_rows    <- valid_rows %>% filter(.data[[air_col]] < 0.80)
+    insuff_pct <- grid_df %>% filter(.data[[flag_col]] == "Insufficient Data") %>% pull(Percentile)
+    
+    onset_text <- if (nrow(valid_rows) == 0) {
+      "Insufficient Data"
+    } else if (nrow(ai_rows) > 0) {
+      paste0("Starts at ", min(ai_rows$Percentile), "th percentile")
+    } else {
+      "No Adverse Impact"
+    }
+    
+    tibble(
+      Model             = model_label,
+      Job_Grade         = g,
+      AI_Onset_Pct      = onset_text,
+      AIR_at_Onset      = if (nrow(ai_rows) > 0) ai_rows[[air_col]][which.min(ai_rows$Percentile)] else NA_real_,
+      Min_Valid_AIR     = if (nrow(valid_rows) > 0) round(min(valid_rows[[air_col]], na.rm = TRUE), 3) else NA_real_,
+      Insufficient_Pcts = if (length(insuff_pct) > 0) paste0(min(insuff_pct), "th–", max(insuff_pct), "th pct") else "None"
+    )
+  })
+}
+
+# 4. GENERATE TABLES, DISPLAY ONSET SUMMARY & EXPORT TO EXCEL
+ai_grid_rel_1pl <- build_ai_grid_rel(df_rel, "Theta_1PL", "Percentile_1PL")
+ai_onset_rel    <- summarize_ai_onset_rel(ai_grid_rel_1pl, "1PL Theta")
+
+print(knitr::kable(ai_onset_rel))
+
+sheets_rel <- list(
+  "1PL_Theta_Religion_AI" = ai_grid_rel_1pl,
+  "AI_Onset_Summary"      = ai_onset_rel
+)
+
+wb_rel <- createWorkbook()
+invisible(imap(sheets_rel, \(df, nm) {
+  addWorksheet(wb_rel, nm)
+  writeDataTable(wb_rel, nm, df)
+  setColWidths(wb_rel, nm, 1:ncol(df), "auto")
+}))
+saveWorkbook(wb_rel, "CSNT_Religion_Theta_Adverse_Impact_By_Percentile.xlsx", overwrite = TRUE)
+```
+
+Adverse Impact starts at 92th percentile for Administrative Officer. There is not sufficient data for HEO, SEO, Grade7 and Grade6.
+
+### 6.G SES Socio-Economic Status
+
+```{r}
+# 1. SETUP & FILTER DATASET (SES - 1PL ONLY)
+target_grades <- c("Administrative Officer", "Executive Officer", "Higher Executive Office",
+                   "Senior Executive Office", "Grade7", "Grade 6")
+
+min_n_threshold <- 5  # Minimum group size required at a cutoff to evaluate AIR reliably
+
+clean_vec <- function(x) {
+  if (is.list(x)) {
+    vapply(x, \(v) if (length(v) == 0 || all(is.na(v))) NA_character_ else as.character(v[[1]]), character(1))
+  } else {
+    x
+  }
+}
+
+# Identify the SES column (handling exact name and potential spacing issues)
+ses_col_name <- intersect(
+  c("what_type_of_work_did_the_main_wage_earner_do", 
+    "what_type_of_work_did_the _main_wage_earner_do",
+    "what_type_of_work_did_the_main_wage_earner_do.x", 
+    "what_type_of_work_did_the_main_wage_earner_do.y"), 
+  colnames(CSNT_Item_Diversity_Scored_2025)
+)[1]
+stopifnot(!is.na(ses_col_name))
+
+if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
+}
+
+# Flatten ALL list-columns upfront and coerce Theta_1PL to numeric
+df_raw <- as.data.frame(CSNT_Item_Diversity_Scored_2025) %>%
+  mutate(
+    across(where(is.list), clean_vec),
+    Theta_1PL = as.numeric(Theta_1PL)
+  )
+
+df_ses <- df_raw %>%
+  mutate(
+    grade = case_when(
+      str_detect(as.character(job_grade), "(?i)Administrative Officer") ~ "Administrative Officer",
+      str_detect(as.character(job_grade), "(?i)Executive Officer")      ~ "Executive Officer",
+      str_detect(as.character(job_grade), "(?i)Higher Executive")       ~ "Higher Executive Office",
+      str_detect(as.character(job_grade), "(?i)Senior Executive")       ~ "Senior Executive Office",
+      str_detect(as.character(job_grade), "(?i)Grade ?7")               ~ "Grade7",
+      str_detect(as.character(job_grade), "(?i)Grade ?6")               ~ "Grade 6"
+    ),
+    ses_raw = str_trim(as.character(.data[[ses_col_name]])),
+    ses_grp = case_when(
+      str_detect(ses_raw, "(?i)^(Technical and craft|Semi-routine manual|Routine manual|Long term unemployed)") ~ "Lower_SES",
+      str_detect(ses_raw, "(?i)^(Modern professional|Clerical and intermediate|Senior managers|Middle or junior managers|Traditional professional)") ~ "Higher_SES",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  filter(!is.na(grade), !is.na(ses_grp), !is.na(Theta_1PL)) %>%
+  mutate(
+    grade          = factor(grade, levels = target_grades),
+    Percentile_1PL = pmax(1, ceiling(percent_rank(Theta_1PL) * 100))
+  )
+
+# 2. VECTORIZED ADVERSE IMPACT GRID BUILDER (With Sparse-Data Guardrail)
+build_ai_grid_ses <- function(data, theta_col, pct_col) {
+  totals <- data %>%
+    dplyr::count(grade, ses_grp, name = "total") %>%
+    pivot_wider(names_from = ses_grp, values_from = total, values_fill = 0)
+  
+  tidyr::expand_grid(
+    grade      = factor(target_grades, levels = target_grades),
+    Percentile = 1:100,
+    ses_grp    = c("Lower_SES", "Higher_SES")
+  ) %>%
+    left_join(
+      data %>%
+        group_by(grade, Percentile = .data[[pct_col]], ses_grp) %>%
+        summarise(n = n(), avg_th = mean(.data[[theta_col]], na.rm = TRUE), .groups = "drop"),
+      by = c("grade", "Percentile", "ses_grp")
+    ) %>%
+    mutate(n = replace_na(n, 0)) %>%
+    pivot_wider(names_from = ses_grp, values_from = c(n, avg_th)) %>%
+    left_join(totals, by = "grade") %>%
+    mutate(
+      Lower_SES  = replace_na(Lower_SES, 0L),
+      Higher_SES = replace_na(Higher_SES, 0L)
+    ) %>%
+    group_by(grade) %>%
+    arrange(desc(Percentile), .by_group = TRUE) %>%
+    mutate(
+      cum_Lower_SES  = cumsum(n_Lower_SES),
+      cum_Higher_SES = cumsum(n_Higher_SES),
+      has_enough_data = Lower_SES >= min_n_threshold & Higher_SES >= min_n_threshold &
+                        cum_Lower_SES >= min_n_threshold & cum_Higher_SES >= min_n_threshold,
+      Lower_SES_Avg_Theta                    = round(avg_th_Lower_SES, 4),
+      Higher_SES_Avg_Theta                   = round(avg_th_Higher_SES, 4),
+      Theta_Diff_Higher_SES_minus_Lower_SES  = round(avg_th_Higher_SES - avg_th_Lower_SES, 4),
+      Impact_Ratio_AIR                       = ifelse(
+        has_enough_data,
+        round((cum_Higher_SES / Higher_SES) / (cum_Lower_SES / Lower_SES), 3),
+        NA_real_
+      ),
+      Adverse_Impact_Flag = case_when(
+        !has_enough_data        ~ "Insufficient Data",
+        Impact_Ratio_AIR < 0.80 ~ "YES (AIR < 0.80)",
+        TRUE                    ~ "NO (AIR >= 0.80)"
+      )
+    ) %>%
+    ungroup() %>%
+    arrange(grade, Percentile) %>%
+    select(
+      grade, Percentile,
+      Lower_SES_Count = n_Lower_SES,
+      Higher_SES_Count = n_Higher_SES,
+      Lower_SES_Avg_Theta,
+      Higher_SES_Avg_Theta,
+      Theta_Diff_Higher_SES_minus_Lower_SES,
+      Impact_Ratio_AIR,
+      Adverse_Impact_Flag
+    ) %>%
+    pivot_wider(
+      names_from = grade,
+      values_from = -c(grade, Percentile),
+      names_glue = "{gsub(' ', '_', grade)}_{.value}"
+    )
+}
+
+# 3. SUMMARIZE ADVERSE IMPACT ONSET PERCENTILE (Handling Insufficient Data without min() warnings)
+summarize_ai_onset_ses <- function(grid_df, model_label = "1PL Theta") {
+  map_dfr(target_grades, \(g) {
+    prefix   <- gsub(" ", "_", g)
+    air_col  <- paste0(prefix, "_Impact_Ratio_AIR")
+    flag_col <- paste0(prefix, "_Adverse_Impact_Flag")
+    
+    valid_rows <- grid_df %>% filter(.data[[flag_col]] != "Insufficient Data")
+    ai_rows    <- valid_rows %>% filter(.data[[air_col]] < 0.80)
+    insuff_pct <- grid_df %>% filter(.data[[flag_col]] == "Insufficient Data") %>% pull(Percentile)
+    
+    onset_text <- if (nrow(valid_rows) == 0) {
+      "Insufficient Data"
+    } else if (nrow(ai_rows) > 0) {
+      paste0("Starts at ", min(ai_rows$Percentile), "th percentile")
+    } else {
+      "No Adverse Impact"
+    }
+    
+    tibble(
+      Model             = model_label,
+      Job_Grade         = g,
+      AI_Onset_Pct      = onset_text,
+      AIR_at_Onset      = if (nrow(ai_rows) > 0) ai_rows[[air_col]][which.min(ai_rows$Percentile)] else NA_real_,
+      Min_Valid_AIR     = if (nrow(valid_rows) > 0) round(min(valid_rows[[air_col]], na.rm = TRUE), 3) else NA_real_,
+      Insufficient_Pcts = if (length(insuff_pct) > 0) paste0(min(insuff_pct), "th–", max(insuff_pct), "th pct") else "None"
+    )
+  })
+}
+
+# 4. GENERATE TABLES, DISPLAY ONSET SUMMARY & EXPORT TO EXCEL
+ai_grid_ses_1pl <- build_ai_grid_ses(df_ses, "Theta_1PL", "Percentile_1PL")
+ai_onset_ses    <- summarize_ai_onset_ses(ai_grid_ses_1pl, "1PL Theta")
+
+print(knitr::kable(ai_onset_ses))
+
+sheets_ses <- list(
+  "1PL_Theta_SES_AI" = ai_grid_ses_1pl,
+  "AI_Onset_Summary" = ai_onset_ses
+)
+
+wb_ses <- createWorkbook()
+invisible(imap(sheets_ses, \(df, nm) {
+  addWorksheet(wb_ses, nm)
+  writeDataTable(wb_ses, nm, df)
+  setColWidths(wb_ses, nm, 1:ncol(df), "auto")
+}))
+saveWorkbook(wb_ses, "CSNT_SES_Theta_Adverse_Impact_By_Percentile.xlsx", overwrite = TRUE)
+```
+
+Adverse Impact starts at 78th percentile for Administrative Officer, 95th percentile for Executive Officer.
+
+## 7. Differential Item Functioning
+
+DIF analysis contains summary of moderately and severely violating items and the direction f the violation. The analysis is based on the newly calculated Theta_1PL, which is IRT 1PL model.
+
+Minimum number of 30 responses per group is used for the basis of DIF analysis for three reasons (GEMINI adapted);
+
+-   ***Preventing Logistic Regression Breakdown:** Logistic regression relies on Maximum Likelihood Estimation (MLE), which requires a minimum sample size to converge reliably.*
+
+-   ***Likelihood Ratio Test (LRT) Validity:** The `anova(mod0, mod1, test = "LRT")` test relies on an asymptotic* $\chi^2$ *approximation. Below* $N \approx 30$ *per group, that approximation degrades, making the resulting `p_val` unreliable.*
+
+<!-- -->
+
+-   ***Practical Balance for CAT Data:** Because Computerized Adaptive Testing distributes items unevenly, setting a strict cutoff too high can eliminate large portions of the item bank—especially for smaller focal groups (e.g., Sexual Orientation or Disability). A floor of 30 keeps the model mathematically stable while retaining as many items as possible.*
+
+*In DIF literature (e.g., Swaminathan & Rogers, 1990; Zumbo, 1999; Scott et al., 2009), **100 to 200+ respondents per group** is typically recommended for strong statistical power to detect moderate DIF. At* $N = 30$*–*$50$*, the logistic regression will run cleanly and can catch severe DIF, but sampling noise will be higher—so, `N_Man`/`N_Woman` (and equivalent group counts) are included in the output tables to flag low-*$N$ *items during review.*
+
+### 7.A Gender
+
+(GEMINI) *LR-DIF conditions on the pre-computed Theta and tests if Gender predicts getting the item right using a standard `glm()`. **This is mathematically equivalent to the 1PL uniform DIF test**, returns the exact same effect sizes (wABC, ESSD, and log-odds shift), natively handles extreme CAT sparsity, and **runs instantly without hanging.***
+
+```{r}
+# 0. ENSURE THETA IS AVAILABLE
+if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
+}
+
+# 1. EXTRACT & FILTER ALIGNED DATA
+stopifnot(
+  "mirt_active_matrix not found." = exists("mirt_active_matrix"),
+  "scored_rows not found." = exists("scored_rows")
+)
+
+gender_col <- CSNT_Item_Diversity_Scored_2025$gender[scored_rows]
+gender_raw <- if (is.list(gender_col)) {
+  vapply(gender_col, \(v) if (length(v) == 0 || all(is.na(v))) NA_character_ else as.character(v[[1]]), character(1))
+} else {
+  as.character(gender_col)
+}
+gender_raw <- trimws(gender_raw)
+
+valid_mask <- !is.na(gender_raw) & gender_raw %in% c("Man", "Woman")
+
+dif_matrix <- as.matrix(mirt_active_matrix[valid_mask, , drop = FALSE])
+dif_gender <- factor(gender_raw[valid_mask], levels = c("Man", "Woman"))
+dif_theta  <- as.numeric(CSNT_Item_Diversity_Scored_2025$Theta_1PL[scored_rows][valid_mask])
+
+cat("Sample sizes for Gender DIF:\n")
+print(table(dif_gender))
+
+
+# 2. FILTER SPARSE ITEMS (Min 30 per group, strictly varying)
+min_n <- 30
+keep_items <- sapply(colnames(dif_matrix), function(col) {
+  x <- dif_matrix[, col]
+  counts <- tapply(!is.na(x), dif_gender, sum)
+  means  <- tapply(x, dif_gender, mean, na.rm = TRUE)
+  all(!is.na(counts)) && all(counts >= min_n) &&
+    all(!is.na(means)) && all(means > 0 & means < 1)
+})
+
+dif_matrix_clean <- dif_matrix[, keep_items, drop = FALSE]
+cat("Items retained for DIF:", ncol(dif_matrix_clean), "of", ncol(dif_matrix), "\n")
+
+
+# 3. RUN LOGISTIC REGRESSION DIF (INSTANT & NON-HANGING)
+# Define focal group (Woman) latent distribution for Expected Score weighting
+woman_theta <- dif_theta[dif_gender == "Woman"]
+woman_mean  <- mean(woman_theta, na.rm = TRUE)
+woman_sd    <- sd(woman_theta, na.rm = TRUE)
+theta_grid  <- seq(-6, 6, length.out = 61)
+weights     <- dnorm(theta_grid, mean = woman_mean, sd = woman_sd)
+weights     <- weights / sum(weights)
+
+suppressWarnings({
+  dif_results <- purrr::map_dfr(colnames(dif_matrix_clean), function(item_nm) {
+    y    <- dif_matrix_clean[, item_nm]
+    seen <- !is.na(y)
+    
+    df_item <- data.frame(
+      score  = y[seen],
+      theta  = dif_theta[seen],
+      gender = dif_gender[seen]
+    )
+    
+    # Model 0: Baseline 1PL (Score ~ Theta)
+    mod0 <- glm(score ~ theta, data = df_item, family = binomial)
+    # Model 1: Uniform DIF (Score ~ Theta + Gender)
+    mod1 <- glm(score ~ theta + gender, data = df_item, family = binomial)
+    
+    # Likelihood Ratio Test
+    lrt   <- anova(mod0, mod1, test = "LRT")
+    p_val <- lrt$`Pr(>Chi)`[2]
+    
+    # Extract 1PL parameters from the GLM
+    coefs  <- coef(mod1)
+    a      <- coefs["theta"]
+    d_man  <- coefs["(Intercept)"]
+    d_diff <- if ("genderWoman" %in% names(coefs)) coefs["genderWoman"] else 0
+    d_wom  <- d_man + d_diff
+    
+    # Calculate Exact Expected Score Curves
+    p_man      <- plogis(a * theta_grid + d_man)
+    p_woman    <- plogis(a * theta_grid + d_wom)
+    diff_curve <- p_woman - p_man
+    
+    tibble(
+      Item    = item_nm,
+      N_Man   = sum(df_item$gender == "Man"),
+      N_Woman = sum(df_item$gender == "Woman"),
+      p_val   = p_val,
+      d_Diff  = round(unname(d_diff), 4),
+      wABC    = round(sum(abs(diff_curve) * weights), 4),
+      ESSD    = round(sum(diff_curve * weights), 4)
+    )
+  })
+})
+
+
+# 4. ADJUST P-VALUES AND SUMMARIZE
+dif_results <- dif_results %>%
+  mutate(
+    adj_pvals = p.adjust(p_val, method = "BH"),
+    Favors = case_when(
+      adj_pvals >= 0.05 ~ "No Significant DIF",
+      ESSD > 0          ~ "Woman (Focal)",
+      ESSD < 0          ~ "Man (Reference)",
+      TRUE              ~ "Neutral"
+    )
+  ) %>%
+  arrange(adj_pvals)
+
+# View all statistically significant DIF items (BH-adjusted p < 0.05)
+flagged_gender_dif <- dif_results %>%
+  filter(adj_pvals < 0.05) %>%
+  select(Item, N_Man, N_Woman, p_val, adj_pvals, d_Diff, wABC, ESSD, Favors)
+
+print(flagged_gender_dif)
+
+# 5. DIF SEVERITY CLASSIFICATION & SUMMARY REPORT
+dif_summary <- dif_results %>%
+  mutate(
+    DIF_Severity = case_when(
+      adj_pvals >= 0.05 ~ "Not Significant",
+      wABC >= 0.20      ~ "Severe",
+      wABC >= 0.10      ~ "Moderate",
+      TRUE              ~ "Negligible"
+    )
+  )
+
+# 5a. Print High-Level Summary Counts
+severity_counts <- dif_summary %>%
+  dplyr::count(DIF_Severity, name = "Item_Count") %>%
+  arrange(match(DIF_Severity, c("Severe", "Moderate", "Negligible", "Not Significant")))
+
+cat("\n=== GENDER DIF OVERALL SUMMARY ===\n")
+print(knitr::kable(severity_counts))
+
+# 5b. Extract and Print Actionable Items (Moderate or Severe)
+actionable_items <- dif_summary %>%
+  filter(DIF_Severity %in% c("Moderate", "Severe")) %>%
+  arrange(desc(wABC)) %>%
+  select(Item, DIF_Severity, N_Man, N_Woman, adj_pvals, d_Diff, wABC, Favors)
+
+cat("\n=== MODERATE & SEVERE ITEMS REQUIRING REVIEW ===\n")
+if (nrow(actionable_items) > 0) {
+  print(knitr::kable(actionable_items))
+} else {
+  cat("No items exhibited Moderate or Severe Gender DIF. Any statistically significant items have negligible effect sizes.\n")
+}
+```
+
+> *INTERPRETATION: (GEMINI) If `adj_pvals < 0.05`, the item exhibits statistically significant Differential Item Functioning (DIF). The Benjamini-Hochberg adjustment prevents false positives that happen when testing dozens or hundreds of items simultaneously.*
+>
+> -   ***Caveat:** In large datasets, even microscopic, meaningless differences will flag as statistically significant. That is why you must look at `wABC` next.*
+>
+> ***`wABC` (Weighted Area Between Curves — Effect Size)** This measures the practical magnitude of the bias. It calculates the physical space between the Men's and Women's probability curves, heavily weighted toward where the majority of the Focal group (Women) actually scores.*
+>
+> -   ***\< 0.10:** Negligible DIF. The item is statistically flagged, but the bias is too tiny to meaningfully impact scores. Usually safe to keep.*
+>
+> -   ***0.10 to 0.20:** Moderate DIF. The item shows noticeable bias. Review the item's content for obvious stereotyping or biased language.*
+>
+> -   ***\> 0.20:** Severe DIF. The item functions completely differently for men and women. It should typically be removed from the scoring model and the item bank.*
+>
+> -   ***`d_Diff` (Log-Odds Difficulty Shift)** This tells you the direction and raw size of the mathematical shift in the logistic regression.*
+>
+>     -   ***Positive value:** The item is easier for the Focal group (Women) compared to Men of the same ability.*
+>
+>     -   ***Negative value:** The item is easier for the Reference group (Men) compared to Women of the same ability.*
+>
+>     ***`N_Man` and `N_Woman`** Because this is Computerized Adaptive Testing (CAT), not everyone saw every item. These columns confirm exactly how many men and women were administered this specific question. If an item flags for severe DIF but only has 32 men and 35 women, the effect size might be unstable noise rather than a structural flaw in the question.*
+
+### 7.B Disability
+
+```{r}
+# 0. ENSURE THETA IS AVAILABLE
+if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
+}
+
+# 1. EXTRACT & FILTER ALIGNED DATA
+stopifnot(
+  "mirt_active_matrix not found." = exists("mirt_active_matrix"),
+  "scored_rows not found." = exists("scored_rows")
+)
+
+# Identify the disability column (handles potential naming variations)
+disab_col_name <- intersect(
+  c("disability", "do_you_have_a_disability", "disability.x", "disability.y"), 
+  colnames(CSNT_Item_Diversity_Scored_2025)
+)[1]
+if (is.na(disab_col_name)) disab_col_name <- "disability"
+
+disab_col <- CSNT_Item_Diversity_Scored_2025[[disab_col_name]][scored_rows]
+
+# Safely flatten list-columns
+disab_raw <- if (is.list(disab_col)) {
+  vapply(disab_col, \(v) if (length(v) == 0 || all(is.na(v))) NA_character_ else as.character(v[[1]]), character(1))
+} else {
+  as.character(disab_col)
+}
+disab_raw <- trimws(disab_raw)
+
+# Keep only rows explicitly coded as 'No' or 'Yes'
+valid_mask <- !is.na(disab_raw) & disab_raw %in% c("No", "Yes")
+
+dif_matrix <- as.matrix(mirt_active_matrix[valid_mask, , drop = FALSE])
+# Set 'No' as Reference group (level 1) and 'Yes' as Focal group (level 2)
+dif_disab  <- factor(disab_raw[valid_mask], levels = c("No", "Yes"))
+dif_theta  <- as.numeric(CSNT_Item_Diversity_Scored_2025$Theta_1PL[scored_rows][valid_mask])
+
+cat("Sample sizes for Disability DIF:\n")
+print(table(dif_disab))
+
+
+# 2. FILTER SPARSE ITEMS (Min 30 per group, strictly varying)
+min_n <- 30
+keep_items <- sapply(colnames(dif_matrix), function(col) {
+  x <- dif_matrix[, col]
+  counts <- tapply(!is.na(x), dif_disab, sum)
+  means  <- tapply(x, dif_disab, mean, na.rm = TRUE)
+  all(!is.na(counts)) && all(counts >= min_n) &&
+    all(!is.na(means)) && all(means > 0 & means < 1)
+})
+
+dif_matrix_clean <- dif_matrix[, keep_items, drop = FALSE]
+cat("Items retained for DIF:", ncol(dif_matrix_clean), "of", ncol(dif_matrix), "\n")
+
+
+# 3. RUN LOGISTIC REGRESSION DIF (INSTANT & NON-HANGING)
+# Define focal group (Yes) latent distribution for Expected Score weighting
+yes_theta  <- dif_theta[dif_disab == "Yes"]
+yes_mean   <- mean(yes_theta, na.rm = TRUE)
+yes_sd     <- sd(yes_theta, na.rm = TRUE)
+theta_grid <- seq(-6, 6, length.out = 61)
+weights    <- dnorm(theta_grid, mean = yes_mean, sd = yes_sd)
+weights    <- weights / sum(weights)
+
+suppressWarnings({
+  dif_results <- purrr::map_dfr(colnames(dif_matrix_clean), function(item_nm) {
+    y    <- dif_matrix_clean[, item_nm]
+    seen <- !is.na(y)
+    
+    df_item <- data.frame(
+      score  = y[seen],
+      theta  = dif_theta[seen],
+      disab  = dif_disab[seen]
+    )
+    
+    # Model 0: Baseline 1PL (Score ~ Theta)
+    mod0 <- glm(score ~ theta, data = df_item, family = binomial)
+    # Model 1: Uniform DIF (Score ~ Theta + Disability)
+    mod1 <- glm(score ~ theta + disab, data = df_item, family = binomial)
+    
+    # Likelihood Ratio Test
+    lrt   <- anova(mod0, mod1, test = "LRT")
+    p_val <- lrt$`Pr(>Chi)`[2]
+    
+    # Extract 1PL parameters from the GLM
+    coefs  <- coef(mod1)
+    a      <- coefs["theta"]
+    d_no   <- coefs["(Intercept)"]
+    d_diff <- if ("disabYes" %in% names(coefs)) coefs["disabYes"] else 0
+    d_yes  <- d_no + d_diff
+    
+    # Calculate Exact Expected Score Curves
+    p_no       <- plogis(a * theta_grid + d_no)
+    p_yes      <- plogis(a * theta_grid + d_yes)
+    diff_curve <- p_yes - p_no
+    
+    tibble(
+      Item    = item_nm,
+      N_No    = sum(df_item$disab == "No"),
+      N_Yes   = sum(df_item$disab == "Yes"),
+      p_val   = p_val,
+      d_Diff  = round(unname(d_diff), 4),
+      wABC    = round(sum(abs(diff_curve) * weights), 4),
+      ESSD    = round(sum(diff_curve * weights), 4)
+    )
+  })
+})
+
+
+# 4. ADJUST P-VALUES AND SUMMARIZE
+dif_results <- dif_results %>%
+  mutate(
+    adj_pvals = p.adjust(p_val, method = "BH"),
+    Favors = case_when(
+      adj_pvals >= 0.05 ~ "No Significant DIF",
+      ESSD > 0          ~ "Yes (Focal)",
+      ESSD < 0          ~ "No (Reference)",
+      TRUE              ~ "Neutral"
+    )
+  ) %>%
+  arrange(adj_pvals)
+
+# View all statistically significant DIF items (BH-adjusted p < 0.05)
+flagged_disab_dif <- dif_results %>%
+  filter(adj_pvals < 0.05) %>%
+  select(Item, N_No, N_Yes, p_val, adj_pvals, d_Diff, wABC, ESSD, Favors)
+
+print(flagged_disab_dif)
+
+
+# 5. DIF SEVERITY CLASSIFICATION & SUMMARY REPORT
+dif_summary <- dif_results %>%
+  mutate(
+    DIF_Severity = case_when(
+      adj_pvals >= 0.05 ~ "Not Significant",
+      wABC >= 0.20      ~ "Severe",
+      wABC >= 0.10      ~ "Moderate",
+      TRUE              ~ "Negligible"
+    )
+  )
+
+# 5a. Print High-Level Summary Counts
+severity_counts <- dif_summary %>%
+  dplyr::count(DIF_Severity, name = "Item_Count") %>%
+  arrange(match(DIF_Severity, c("Severe", "Moderate", "Negligible", "Not Significant")))
+
+cat("\n=== DISABILITY DIF OVERALL SUMMARY ===\n")
+print(knitr::kable(severity_counts))
+
+# 5b. Extract and Print Actionable Items (Moderate or Severe)
+actionable_items <- dif_summary %>%
+  filter(DIF_Severity %in% c("Moderate", "Severe")) %>%
+  arrange(desc(wABC)) %>%
+  select(Item, DIF_Severity, N_No, N_Yes, adj_pvals, d_Diff, wABC, Favors)
+
+cat("\n=== MODERATE & SEVERE ITEMS REQUIRING REVIEW ===\n")
+if (nrow(actionable_items) > 0) {
+  print(knitr::kable(actionable_items))
+} else {
+  cat("No items exhibited Moderate or Severe Disability DIF. Any statistically significant items have negligible effect sizes.\n")
+}
+```
+
+### 7.C Ethnicity
+
+```{r}
+# 0. ENSURE THETA IS AVAILABLE
+if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
+}
+
+# 1. EXTRACT & FILTER ALIGNED DATA
+stopifnot(
+  "mirt_active_matrix not found." = exists("mirt_active_matrix"),
+  "scored_rows not found." = exists("scored_rows")
+)
+
+focal_ethnicities <- c(
+  "Asian / Asian British",
+  "Black / African / Caribbean / Black British",
+  "Mixed / multiple ethnic groups",
+  "Other ethnic group"
+)
+
+# Identify the ethnicity column
+eth_col_name <- intersect(
+  c("select_your_ethnic_group", "select_your_ethnic_group.y", "select_your_ethnic_group.x"), 
+  colnames(CSNT_Item_Diversity_Scored_2025)
+)[1]
+stopifnot(!is.na(eth_col_name))
+
+eth_col <- CSNT_Item_Diversity_Scored_2025[[eth_col_name]][scored_rows]
+
+# Safely flatten list-columns
+eth_raw <- if (is.list(eth_col)) {
+  vapply(eth_col, \(v) if (length(v) == 0 || all(is.na(v))) NA_character_ else as.character(v[[1]]), character(1))
+} else {
+  as.character(eth_col)
+}
+eth_raw <- trimws(eth_raw)
+
+# Map to Reference ("White") vs Focal ("Others")
+eth_grp <- case_when(
+  str_detect(eth_raw, "(?i)^white") ~ "White",
+  eth_raw %in% focal_ethnicities | str_detect(eth_raw, "(?i)^(asian|black|mixed|other ethnic)") ~ "Others",
+  TRUE ~ NA_character_
+)
+
+# Keep only rows mapped to 'White' or 'Others'
+valid_mask <- !is.na(eth_grp) & eth_grp %in% c("White", "Others")
+
+dif_matrix <- as.matrix(mirt_active_matrix[valid_mask, , drop = FALSE])
+# Set 'White' as Reference group (level 1) and 'Others' as Focal group (level 2)
+dif_eth    <- factor(eth_grp[valid_mask], levels = c("White", "Others"))
+dif_theta  <- as.numeric(CSNT_Item_Diversity_Scored_2025$Theta_1PL[scored_rows][valid_mask])
+
+cat("Sample sizes for Ethnicity DIF:\n")
+print(table(dif_eth))
+
+
+# 2. FILTER SPARSE ITEMS (Min 30 per group, strictly varying)
+min_n <- 30
+keep_items <- sapply(colnames(dif_matrix), function(col) {
+  x <- dif_matrix[, col]
+  counts <- tapply(!is.na(x), dif_eth, sum)
+  means  <- tapply(x, dif_eth, mean, na.rm = TRUE)
+  all(!is.na(counts)) && all(counts >= min_n) &&
+    all(!is.na(means)) && all(means > 0 & means < 1)
+})
+
+dif_matrix_clean <- dif_matrix[, keep_items, drop = FALSE]
+cat("Items retained for DIF:", ncol(dif_matrix_clean), "of", ncol(dif_matrix), "\n")
+
+
+# 3. RUN LOGISTIC REGRESSION DIF (INSTANT & NON-HANGING)
+# Define focal group (Others) latent distribution for Expected Score weighting
+others_theta <- dif_theta[dif_eth == "Others"]
+others_mean  <- mean(others_theta, na.rm = TRUE)
+others_sd    <- sd(others_theta, na.rm = TRUE)
+theta_grid   <- seq(-6, 6, length.out = 61)
+weights      <- dnorm(theta_grid, mean = others_mean, sd = others_sd)
+weights      <- weights / sum(weights)
+
+suppressWarnings({
+  dif_results <- purrr::map_dfr(colnames(dif_matrix_clean), function(item_nm) {
+    y    <- dif_matrix_clean[, item_nm]
+    seen <- !is.na(y)
+    
+    df_item <- data.frame(
+      score = y[seen],
+      theta = dif_theta[seen],
+      eth   = dif_eth[seen]
+    )
+    
+    # Model 0: Baseline 1PL (Score ~ Theta)
+    mod0 <- glm(score ~ theta, data = df_item, family = binomial)
+    # Model 1: Uniform DIF (Score ~ Theta + Ethnicity)
+    mod1 <- glm(score ~ theta + eth, data = df_item, family = binomial)
+    
+    # Likelihood Ratio Test
+    lrt   <- anova(mod0, mod1, test = "LRT")
+    p_val <- lrt$`Pr(>Chi)`[2]
+    
+    # Extract 1PL parameters from the GLM
+    coefs    <- coef(mod1)
+    a        <- coefs["theta"]
+    d_white  <- coefs["(Intercept)"]
+    d_diff   <- if ("ethOthers" %in% names(coefs)) coefs["ethOthers"] else 0
+    d_others <- d_white + d_diff
+    
+    # Calculate Exact Expected Score Curves
+    p_white    <- plogis(a * theta_grid + d_white)
+    p_others   <- plogis(a * theta_grid + d_others)
+    diff_curve <- p_others - p_white
+    
+    tibble(
+      Item     = item_nm,
+      N_White  = sum(df_item$eth == "White"),
+      N_Others = sum(df_item$eth == "Others"),
+      p_val    = p_val,
+      d_Diff   = round(unname(d_diff), 4),
+      wABC     = round(sum(abs(diff_curve) * weights), 4),
+      ESSD     = round(sum(diff_curve * weights), 4)
+    )
+  })
+})
+
+
+# 4. ADJUST P-VALUES AND SUMMARIZE
+dif_results <- dif_results %>%
+  mutate(
+    adj_pvals = p.adjust(p_val, method = "BH"),
+    Favors = case_when(
+      adj_pvals >= 0.05 ~ "No Significant DIF",
+      ESSD > 0          ~ "Others (Focal)",
+      ESSD < 0          ~ "White (Reference)",
+      TRUE              ~ "Neutral"
+    )
+  ) %>%
+  arrange(adj_pvals)
+
+# View all statistically significant DIF items (BH-adjusted p < 0.05)
+flagged_eth_dif <- dif_results %>%
+  filter(adj_pvals < 0.05) %>%
+  select(Item, N_White, N_Others, p_val, adj_pvals, d_Diff, wABC, ESSD, Favors)
+
+print(flagged_eth_dif)
+
+
+# 5. DIF SEVERITY CLASSIFICATION & SUMMARY REPORT
+dif_summary <- dif_results %>%
+  mutate(
+    DIF_Severity = case_when(
+      adj_pvals >= 0.05 ~ "Not Significant",
+      wABC >= 0.20      ~ "Severe",
+      wABC >= 0.10      ~ "Moderate",
+      TRUE              ~ "Negligible"
+    )
+  )
+
+# 5a. Print High-Level Summary Counts
+severity_counts <- dif_summary %>%
+  dplyr::count(DIF_Severity, name = "Item_Count") %>%
+  arrange(match(DIF_Severity, c("Severe", "Moderate", "Negligible", "Not Significant")))
+
+cat("\n=== ETHNICITY DIF OVERALL SUMMARY ===\n")
+print(knitr::kable(severity_counts))
+
+# 5b. Extract and Print Actionable Items (Moderate or Severe)
+actionable_items <- dif_summary %>%
+  filter(DIF_Severity %in% c("Moderate", "Severe")) %>%
+  arrange(desc(wABC)) %>%
+  select(Item, DIF_Severity, N_White, N_Others, adj_pvals, d_Diff, wABC, Favors)
+
+cat("\n=== MODERATE & SEVERE ITEMS REQUIRING REVIEW ===\n")
+if (nrow(actionable_items) > 0) {
+  print(knitr::kable(actionable_items))
+} else {
+  cat("No items exhibited Moderate or Severe Ethnicity DIF. Any statistically significant items have negligible effect sizes.\n")
+}
+```
+
+### 7.D Sexual Orientation
+
+```{r}
+# 0. ENSURE THETA IS AVAILABLE
+if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
+}
+
+# 1. EXTRACT & FILTER ALIGNED DATA
+stopifnot(
+  "mirt_active_matrix not found." = exists("mirt_active_matrix"),
+  "scored_rows not found." = exists("scored_rows")
+)
+
+focal_orientations <- c("Bisexual", "Gay or lesbian", "Prefer to self-describe")
+
+# Identify the sexual orientation column
+so_col_name <- intersect(
+  c("what_is_your_sexual_orientation", "what_is_your_sexual_orientation.y", "what_is_your_sexual_orientation.x"), 
+  colnames(CSNT_Item_Diversity_Scored_2025)
+)[1]
+stopifnot(!is.na(so_col_name))
+
+so_col <- CSNT_Item_Diversity_Scored_2025[[so_col_name]][scored_rows]
+
+# Safely flatten list-columns
+so_raw <- if (is.list(so_col)) {
+  vapply(so_col, \(v) if (length(v) == 0 || all(is.na(v))) NA_character_ else as.character(v[[1]]), character(1))
+} else {
+  as.character(so_col)
+}
+so_raw <- trimws(so_raw)
+
+# Map to Reference ("Heterosexual") vs Focal ("Other")
+so_grp <- case_when(
+  str_detect(so_raw, "(?i)^heterosexual") ~ "Heterosexual",
+  so_raw %in% focal_orientations | str_detect(so_raw, "(?i)^(bisexual|gay|lesbian|prefer to self)") ~ "Other",
+  TRUE ~ NA_character_
+)
+
+# Keep only rows mapped to 'Heterosexual' or 'Other'
+valid_mask <- !is.na(so_grp) & so_grp %in% c("Heterosexual", "Other")
+
+dif_matrix <- as.matrix(mirt_active_matrix[valid_mask, , drop = FALSE])
+# Set 'Heterosexual' as Reference group (level 1) and 'Other' as Focal group (level 2)
+dif_so     <- factor(so_grp[valid_mask], levels = c("Heterosexual", "Other"))
+dif_theta  <- as.numeric(CSNT_Item_Diversity_Scored_2025$Theta_1PL[scored_rows][valid_mask])
+
+cat("Sample sizes for Sexual Orientation DIF:\n")
+print(table(dif_so))
+
+
+# 2. FILTER SPARSE ITEMS (Min 30 per group, strictly varying)
+min_n <- 30
+keep_items <- sapply(colnames(dif_matrix), function(col) {
+  x <- dif_matrix[, col]
+  counts <- tapply(!is.na(x), dif_so, sum)
+  means  <- tapply(x, dif_so, mean, na.rm = TRUE)
+  all(!is.na(counts)) && all(counts >= min_n) &&
+    all(!is.na(means)) && all(means > 0 & means < 1)
+})
+
+dif_matrix_clean <- dif_matrix[, keep_items, drop = FALSE]
+cat("Items retained for DIF:", ncol(dif_matrix_clean), "of", ncol(dif_matrix), "\n")
+
+
+# 3. RUN LOGISTIC REGRESSION DIF (INSTANT & NON-HANGING)
+# Define focal group (Other) latent distribution for Expected Score weighting
+other_theta <- dif_theta[dif_so == "Other"]
+other_mean  <- mean(other_theta, na.rm = TRUE)
+other_sd    <- sd(other_theta, na.rm = TRUE)
+theta_grid  <- seq(-6, 6, length.out = 61)
+weights     <- dnorm(theta_grid, mean = other_mean, sd = other_sd)
+weights     <- weights / sum(weights)
+
+suppressWarnings({
+  dif_results <- purrr::map_dfr(colnames(dif_matrix_clean), function(item_nm) {
+    y    <- dif_matrix_clean[, item_nm]
+    seen <- !is.na(y)
+    
+    df_item <- data.frame(
+      score = y[seen],
+      theta = dif_theta[seen],
+      so    = dif_so[seen]
+    )
+    
+    # Model 0: Baseline 1PL (Score ~ Theta)
+    mod0 <- glm(score ~ theta, data = df_item, family = binomial)
+    # Model 1: Uniform DIF (Score ~ Theta + Sexual Orientation)
+    mod1 <- glm(score ~ theta + so, data = df_item, family = binomial)
+    
+    # Likelihood Ratio Test
+    lrt   <- anova(mod0, mod1, test = "LRT")
+    p_val <- lrt$`Pr(>Chi)`[2]
+    
+    # Extract 1PL parameters from the GLM
+    coefs   <- coef(mod1)
+    a       <- coefs["theta"]
+    d_het   <- coefs["(Intercept)"]
+    d_diff  <- if ("soOther" %in% names(coefs)) coefs["soOther"] else 0
+    d_other <- d_het + d_diff
+    
+    # Calculate Exact Expected Score Curves
+    p_het      <- plogis(a * theta_grid + d_het)
+    p_other    <- plogis(a * theta_grid + d_other)
+    diff_curve <- p_other - p_het
+    
+    tibble(
+      Item    = item_nm,
+      N_Het   = sum(df_item$so == "Heterosexual"),
+      N_Other = sum(df_item$so == "Other"),
+      p_val   = p_val,
+      d_Diff  = round(unname(d_diff), 4),
+      wABC    = round(sum(abs(diff_curve) * weights), 4),
+      ESSD    = round(sum(diff_curve * weights), 4)
+    )
+  })
+})
+
+
+# 4. ADJUST P-VALUES AND SUMMARIZE
+dif_results <- dif_results %>%
+  mutate(
+    adj_pvals = p.adjust(p_val, method = "BH"),
+    Favors = case_when(
+      adj_pvals >= 0.05 ~ "No Significant DIF",
+      ESSD > 0          ~ "Other (Focal)",
+      ESSD < 0          ~ "Heterosexual (Reference)",
+      TRUE              ~ "Neutral"
+    )
+  ) %>%
+  arrange(adj_pvals)
+
+# View all statistically significant DIF items (BH-adjusted p < 0.05)
+flagged_so_dif <- dif_results %>%
+  filter(adj_pvals < 0.05) %>%
+  select(Item, N_Het, N_Other, p_val, adj_pvals, d_Diff, wABC, ESSD, Favors)
+
+print(flagged_so_dif)
+
+
+# 5. DIF SEVERITY CLASSIFICATION & SUMMARY REPORT
+dif_summary <- dif_results %>%
+  mutate(
+    DIF_Severity = case_when(
+      adj_pvals >= 0.05 ~ "Not Significant",
+      wABC >= 0.20      ~ "Severe",
+      wABC >= 0.10      ~ "Moderate",
+      TRUE              ~ "Negligible"
+    )
+  )
+
+# 5a. Print High-Level Summary Counts
+severity_counts <- dif_summary %>%
+  dplyr::count(DIF_Severity, name = "Item_Count") %>%
+  arrange(match(DIF_Severity, c("Severe", "Moderate", "Negligible", "Not Significant")))
+
+cat("\n=== SEXUAL ORIENTATION DIF OVERALL SUMMARY ===\n")
+print(knitr::kable(severity_counts))
+
+# 5b. Extract and Print Actionable Items (Moderate or Severe)
+actionable_items <- dif_summary %>%
+  filter(DIF_Severity %in% c("Moderate", "Severe")) %>%
+  arrange(desc(wABC)) %>%
+  select(Item, DIF_Severity, N_Het, N_Other, adj_pvals, d_Diff, wABC, Favors)
+
+cat("\n=== MODERATE & SEVERE ITEMS REQUIRING REVIEW ===\n")
+if (nrow(actionable_items) > 0) {
+  print(knitr::kable(actionable_items))
+} else {
+  cat("No items exhibited Moderate or Severe Sexual Orientation DIF. Any statistically significant items have negligible effect sizes.\n")
+}
+```
+
+### 7.E Age
+
+```{r}
+# 0. ENSURE THETA IS AVAILABLE
+if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
+}
+
+# 1. EXTRACT & FILTER ALIGNED DATA
+stopifnot(
+  "mirt_active_matrix not found." = exists("mirt_active_matrix"),
+  "scored_rows not found." = exists("scored_rows")
+)
+
+# Identify the age column
+age_col_name <- intersect(
+  c("select_your_current_age_group", "select_your_current_age_group.y", "select_your_current_age_group.x"), 
+  colnames(CSNT_Item_Diversity_Scored_2025)
+)[1]
+stopifnot(!is.na(age_col_name))
+
+age_col <- CSNT_Item_Diversity_Scored_2025[[age_col_name]][scored_rows]
+
+# Safely flatten list-columns
+age_raw <- if (is.list(age_col)) {
+  vapply(age_col, \(v) if (length(v) == 0 || all(is.na(v))) NA_character_ else as.character(v[[1]]), character(1))
+} else {
+  as.character(age_col)
+}
+age_raw <- trimws(age_raw)
+
+# Map to Reference ("Under40") vs Focal ("40andOver")
+age_grp <- case_when(
+  str_detect(age_raw, "^(16-24|25-29|30-34|35-39)$")             ~ "Under40",
+  str_detect(age_raw, "^(40-44|45-49|50-54|55-59|60-64|65\\+)$") ~ "40andOver",
+  TRUE ~ NA_character_
+)
+
+# Keep only rows mapped to 'Under40' or '40andOver'
+valid_mask <- !is.na(age_grp) & age_grp %in% c("Under40", "40andOver")
+
+dif_matrix <- as.matrix(mirt_active_matrix[valid_mask, , drop = FALSE])
+# Set 'Under40' as Reference group (level 1) and '40andOver' as Focal group (level 2)
+dif_age    <- factor(age_grp[valid_mask], levels = c("Under40", "40andOver"))
+dif_theta  <- as.numeric(CSNT_Item_Diversity_Scored_2025$Theta_1PL[scored_rows][valid_mask])
+
+cat("Sample sizes for Age DIF:\n")
+print(table(dif_age))
+
+
+# 2. FILTER SPARSE ITEMS (Min 30 per group, strictly varying)
+min_n <- 30
+keep_items <- sapply(colnames(dif_matrix), function(col) {
+  x <- dif_matrix[, col]
+  counts <- tapply(!is.na(x), dif_age, sum)
+  means  <- tapply(x, dif_age, mean, na.rm = TRUE)
+  all(!is.na(counts)) && all(counts >= min_n) &&
+    all(!is.na(means)) && all(means > 0 & means < 1)
+})
+
+dif_matrix_clean <- dif_matrix[, keep_items, drop = FALSE]
+cat("Items retained for DIF:", ncol(dif_matrix_clean), "of", ncol(dif_matrix), "\n")
+
+
+# 3. RUN LOGISTIC REGRESSION DIF (INSTANT & NON-HANGING)
+# Define focal group (40andOver) latent distribution for Expected Score weighting
+over40_theta <- dif_theta[dif_age == "40andOver"]
+over40_mean  <- mean(over40_theta, na.rm = TRUE)
+over40_sd    <- sd(over40_theta, na.rm = TRUE)
+theta_grid   <- seq(-6, 6, length.out = 61)
+weights      <- dnorm(theta_grid, mean = over40_mean, sd = over40_sd)
+weights      <- weights / sum(weights)
+
+suppressWarnings({
+  dif_results <- purrr::map_dfr(colnames(dif_matrix_clean), function(item_nm) {
+    y    <- dif_matrix_clean[, item_nm]
+    seen <- !is.na(y)
+    
+    df_item <- data.frame(
+      score = y[seen],
+      theta = dif_theta[seen],
+      age   = dif_age[seen]
+    )
+    
+    # Model 0: Baseline 1PL (Score ~ Theta)
+    mod0 <- glm(score ~ theta, data = df_item, family = binomial)
+    # Model 1: Uniform DIF (Score ~ Theta + Age Group)
+    mod1 <- glm(score ~ theta + age, data = df_item, family = binomial)
+    
+    # Likelihood Ratio Test
+    lrt   <- anova(mod0, mod1, test = "LRT")
+    p_val <- lrt$`Pr(>Chi)`[2]
+    
+    # Extract 1PL parameters from the GLM
+    coefs    <- coef(mod1)
+    a        <- coefs["theta"]
+    d_under  <- coefs["(Intercept)"]
+    d_diff   <- if ("age40andOver" %in% names(coefs)) coefs["age40andOver"] else 0
+    d_over   <- d_under + d_diff
+    
+    # Calculate Exact Expected Score Curves
+    p_under    <- plogis(a * theta_grid + d_under)
+    p_over     <- plogis(a * theta_grid + d_over)
+    diff_curve <- p_over - p_under
+    
+    tibble(
+      Item        = item_nm,
+      N_Under40   = sum(df_item$age == "Under40"),
+      N_40andOver = sum(df_item$age == "40andOver"),
+      p_val       = p_val,
+      d_Diff      = round(unname(d_diff), 4),
+      wABC        = round(sum(abs(diff_curve) * weights), 4),
+      ESSD        = round(sum(diff_curve * weights), 4)
+    )
+  })
+})
+
+
+# 4. ADJUST P-VALUES AND SUMMARIZE
+dif_results <- dif_results %>%
+  mutate(
+    adj_pvals = p.adjust(p_val, method = "BH"),
+    Favors = case_when(
+      adj_pvals >= 0.05 ~ "No Significant DIF",
+      ESSD > 0          ~ "40 and Over (Focal)",
+      ESSD < 0          ~ "Under 40 (Reference)",
+      TRUE              ~ "Neutral"
+    )
+  ) %>%
+  arrange(adj_pvals)
+
+# View all statistically significant DIF items (BH-adjusted p < 0.05)
+flagged_age_dif <- dif_results %>%
+  filter(adj_pvals < 0.05) %>%
+  select(Item, N_Under40, N_40andOver, p_val, adj_pvals, d_Diff, wABC, ESSD, Favors)
+
+print(flagged_age_dif)
+
+
+# 5. DIF SEVERITY CLASSIFICATION & SUMMARY REPORT
+dif_summary <- dif_results %>%
+  mutate(
+    DIF_Severity = case_when(
+      adj_pvals >= 0.05 ~ "Not Significant",
+      wABC >= 0.20      ~ "Severe",
+      wABC >= 0.10      ~ "Moderate",
+      TRUE              ~ "Negligible"
+    )
+  )
+
+# 5a. Print High-Level Summary Counts
+severity_counts <- dif_summary %>%
+  dplyr::count(DIF_Severity, name = "Item_Count") %>%
+  arrange(match(DIF_Severity, c("Severe", "Moderate", "Negligible", "Not Significant")))
+
+cat("\n=== AGE DIF OVERALL SUMMARY ===\n")
+print(knitr::kable(severity_counts))
+
+# 5b. Extract and Print Actionable Items (Moderate or Severe)
+actionable_items <- dif_summary %>%
+  filter(DIF_Severity %in% c("Moderate", "Severe")) %>%
+  arrange(desc(wABC)) %>%
+  select(Item, DIF_Severity, N_Under40, N_40andOver, adj_pvals, d_Diff, wABC, Favors)
+
+cat("\n=== MODERATE & SEVERE ITEMS REQUIRING REVIEW ===\n")
+if (nrow(actionable_items) > 0) {
+  print(knitr::kable(actionable_items))
+} else {
+  cat("No items exhibited Moderate or Severe Age DIF. Any statistically significant items have negligible effect sizes.\n")
+}
+```
+
+### 7.F Religion
+
+Christian reference group. Other belief or religions focal group
+
+```{r}
+# 0. ENSURE THETA IS AVAILABLE
+if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
+}
+
+# 1. EXTRACT & FILTER ALIGNED DATA
+stopifnot(
+  "mirt_active_matrix not found." = exists("mirt_active_matrix"),
+  "scored_rows not found." = exists("scored_rows")
+)
+
+focal_religions <- c("No religion", "Muslim", "Hindu", "Sikh", "Other religion", "Buddhist", "Jewish")
+
+# Identify the religion column
+rel_col_name <- intersect(
+  c("what_is_your_religion_or_belief", "what_is_your_religion_or_belief.y", "what_is_your_religion_or_belief.x"), 
+  colnames(CSNT_Item_Diversity_Scored_2025)
+)[1]
+stopifnot(!is.na(rel_col_name))
+
+rel_col <- CSNT_Item_Diversity_Scored_2025[[rel_col_name]][scored_rows]
+
+# Safely flatten list-columns
+rel_raw <- if (is.list(rel_col)) {
+  vapply(rel_col, \(v) if (length(v) == 0 || all(is.na(v))) NA_character_ else as.character(v[[1]]), character(1))
+} else {
+  as.character(rel_col)
+}
+rel_raw <- trimws(rel_raw)
+
+# Map to Reference ("Christian") vs Focal ("Other")
+rel_grp <- case_when(
+  str_detect(rel_raw, "(?i)^christian$") ~ "Christian",
+  rel_raw %in% focal_religions | 
+    str_detect(rel_raw, "(?i)^(no religion|muslim|hindu|sikh|other religion|buddhist|jewish)$") ~ "Other",
+  TRUE ~ NA_character_
+)
+
+# Keep only rows mapped to 'Christian' or 'Other'
+valid_mask <- !is.na(rel_grp) & rel_grp %in% c("Christian", "Other")
+
+dif_matrix <- as.matrix(mirt_active_matrix[valid_mask, , drop = FALSE])
+# Set 'Christian' as Reference group (level 1) and 'Other' as Focal group (level 2)
+dif_rel    <- factor(rel_grp[valid_mask], levels = c("Christian", "Other"))
+dif_theta  <- as.numeric(CSNT_Item_Diversity_Scored_2025$Theta_1PL[scored_rows][valid_mask])
+
+cat("Sample sizes for Religion DIF:\n")
+print(table(dif_rel))
+
+
+# 2. FILTER SPARSE ITEMS (Min 30 per group, strictly varying)
+min_n <- 30
+keep_items <- sapply(colnames(dif_matrix), function(col) {
+  x <- dif_matrix[, col]
+  counts <- tapply(!is.na(x), dif_rel, sum)
+  means  <- tapply(x, dif_rel, mean, na.rm = TRUE)
+  all(!is.na(counts)) && all(counts >= min_n) &&
+    all(!is.na(means)) && all(means > 0 & means < 1)
+})
+
+dif_matrix_clean <- dif_matrix[, keep_items, drop = FALSE]
+cat("Items retained for DIF:", ncol(dif_matrix_clean), "of", ncol(dif_matrix), "\n")
+
+
+# 3. RUN LOGISTIC REGRESSION DIF (INSTANT & NON-HANGING)
+# Define focal group (Other) latent distribution for Expected Score weighting
+other_theta <- dif_theta[dif_rel == "Other"]
+other_mean  <- mean(other_theta, na.rm = TRUE)
+other_sd    <- sd(other_theta, na.rm = TRUE)
+theta_grid  <- seq(-6, 6, length.out = 61)
+weights     <- dnorm(theta_grid, mean = other_mean, sd = other_sd)
+weights     <- weights / sum(weights)
+
+suppressWarnings({
+  dif_results <- purrr::map_dfr(colnames(dif_matrix_clean), function(item_nm) {
+    y    <- dif_matrix_clean[, item_nm]
+    seen <- !is.na(y)
+    
+    df_item <- data.frame(
+      score = y[seen],
+      theta = dif_theta[seen],
+      rel   = dif_rel[seen]
+    )
+    
+    # Model 0: Baseline 1PL (Score ~ Theta)
+    mod0 <- glm(score ~ theta, data = df_item, family = binomial)
+    # Model 1: Uniform DIF (Score ~ Theta + Religion)
+    mod1 <- glm(score ~ theta + rel, data = df_item, family = binomial)
+    
+    # Likelihood Ratio Test
+    lrt   <- anova(mod0, mod1, test = "LRT")
+    p_val <- lrt$`Pr(>Chi)`[2]
+    
+    # Extract 1PL parameters from the GLM
+    coefs   <- coef(mod1)
+    a       <- coefs["theta"]
+    d_chris <- coefs["(Intercept)"]
+    d_diff  <- if ("relOther" %in% names(coefs)) coefs["relOther"] else 0
+    d_other <- d_chris + d_diff
+    
+    # Calculate Exact Expected Score Curves
+    p_chris    <- plogis(a * theta_grid + d_chris)
+    p_other    <- plogis(a * theta_grid + d_other)
+    diff_curve <- p_other - p_chris
+    
+    tibble(
+      Item      = item_nm,
+      N_Chris   = sum(df_item$rel == "Christian"),
+      N_Other   = sum(df_item$rel == "Other"),
+      p_val     = p_val,
+      d_Diff    = round(unname(d_diff), 4),
+      wABC      = round(sum(abs(diff_curve) * weights), 4),
+      ESSD      = round(sum(diff_curve * weights), 4)
+    )
+  })
+})
+
+
+# 4. ADJUST P-VALUES AND SUMMARIZE
+dif_results <- dif_results %>%
+  mutate(
+    adj_pvals = p.adjust(p_val, method = "BH"),
+    Favors = case_when(
+      adj_pvals >= 0.05 ~ "No Significant DIF",
+      ESSD > 0          ~ "Other (Focal)",
+      ESSD < 0          ~ "Christian (Reference)",
+      TRUE              ~ "Neutral"
+    )
+  ) %>%
+  arrange(adj_pvals)
+
+# View all statistically significant DIF items (BH-adjusted p < 0.05)
+flagged_rel_dif <- dif_results %>%
+  filter(adj_pvals < 0.05) %>%
+  select(Item, N_Chris, N_Other, p_val, adj_pvals, d_Diff, wABC, ESSD, Favors)
+
+print(flagged_rel_dif)
+
+
+# 5. DIF SEVERITY CLASSIFICATION & SUMMARY REPORT
+dif_summary <- dif_results %>%
+  mutate(
+    DIF_Severity = case_when(
+      adj_pvals >= 0.05 ~ "Not Significant",
+      wABC >= 0.20      ~ "Severe",
+      wABC >= 0.10      ~ "Moderate",
+      TRUE              ~ "Negligible"
+    )
+  )
+
+# 5a. Print High-Level Summary Counts
+severity_counts <- dif_summary %>%
+  dplyr::count(DIF_Severity, name = "Item_Count") %>%
+  arrange(match(DIF_Severity, c("Severe", "Moderate", "Negligible", "Not Significant")))
+
+cat("\n=== RELIGION DIF OVERALL SUMMARY ===\n")
+print(knitr::kable(severity_counts))
+
+# 5b. Extract and Print Actionable Items (Moderate or Severe)
+actionable_items <- dif_summary %>%
+  filter(DIF_Severity %in% c("Moderate", "Severe")) %>%
+  arrange(desc(wABC)) %>%
+  select(Item, DIF_Severity, N_Chris, N_Other, adj_pvals, d_Diff, wABC, Favors)
+
+cat("\n=== MODERATE & SEVERE ITEMS REQUIRING REVIEW ===\n")
+if (nrow(actionable_items) > 0) {
+  print(knitr::kable(actionable_items))
+} else {
+  cat("No items exhibited Moderate or Severe Religion DIF. Any statistically significant items have negligible effect sizes.\n")
+}
+```
+
+### 7.G SES Socio-Economic Status
+
+Reference group Lower SES, focal group Higher SES
+
+```{r}
+# 0. ENSURE THETA IS AVAILABLE
+if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
+}
+
+# 1. EXTRACT & FILTER ALIGNED DATA
+stopifnot(
+  "mirt_active_matrix not found." = exists("mirt_active_matrix"),
+  "scored_rows not found." = exists("scored_rows")
+)
+
+# Identify the SES column (handling exact name and potential spacing issues)
+ses_col_name <- intersect(
+  c("what_type_of_work_did_the_main_wage_earner_do", 
+    "what_type_of_work_did_the _main_wage_earner_do",
+    "what_type_of_work_did_the_main_wage_earner_do.y"), 
+  colnames(CSNT_Item_Diversity_Scored_2025)
+)[1]
+stopifnot(!is.na(ses_col_name))
+
+ses_col <- CSNT_Item_Diversity_Scored_2025[[ses_col_name]][scored_rows]
+
+# Safely flatten list-columns
+ses_raw <- if (is.list(ses_col)) {
+  vapply(ses_col, \(v) if (length(v) == 0 || all(is.na(v))) NA_character_ else as.character(v[[1]]), character(1))
+} else {
+  as.character(ses_col)
+}
+ses_raw <- trimws(ses_raw)
+
+# Map to Reference ("Lower_SES") vs Focal ("Higher_SES") based on leading text
+ses_grp <- case_when(
+  str_detect(ses_raw, "(?i)^(Technical and craft|Semi-routine manual|Routine manual|Long term unemployed)") ~ "Lower_SES",
+  str_detect(ses_raw, "(?i)^(Modern professional|Clerical and intermediate|Senior managers|Middle or junior managers|Traditional professional)") ~ "Higher_SES",
+  TRUE ~ NA_character_
+)
+
+# Keep only rows mapped to 'Lower_SES' or 'Higher_SES'
+valid_mask <- !is.na(ses_grp) & ses_grp %in% c("Lower_SES", "Higher_SES")
+
+dif_matrix <- as.matrix(mirt_active_matrix[valid_mask, , drop = FALSE])
+# Set 'Lower_SES' as Reference group (level 1) and 'Higher_SES' as Focal group (level 2)
+dif_ses    <- factor(ses_grp[valid_mask], levels = c("Lower_SES", "Higher_SES"))
+dif_theta  <- as.numeric(CSNT_Item_Diversity_Scored_2025$Theta_1PL[scored_rows][valid_mask])
+
+cat("Sample sizes for SES DIF:\n")
+print(table(dif_ses))
+
+
+# 2. FILTER SPARSE ITEMS (Min 30 per group, strictly varying)
+min_n <- 30
+keep_items <- sapply(colnames(dif_matrix), function(col) {
+  x <- dif_matrix[, col]
+  counts <- tapply(!is.na(x), dif_ses, sum)
+  means  <- tapply(x, dif_ses, mean, na.rm = TRUE)
+  all(!is.na(counts)) && all(counts >= min_n) &&
+    all(!is.na(means)) && all(means > 0 & means < 1)
+})
+
+dif_matrix_clean <- dif_matrix[, keep_items, drop = FALSE]
+cat("Items retained for DIF:", ncol(dif_matrix_clean), "of", ncol(dif_matrix), "\n")
+
+
+# 3. RUN LOGISTIC REGRESSION DIF (INSTANT & NON-HANGING)
+# Define focal group (Higher_SES) latent distribution for Expected Score weighting
+higher_theta <- dif_theta[dif_ses == "Higher_SES"]
+higher_mean  <- mean(higher_theta, na.rm = TRUE)
+higher_sd    <- sd(higher_theta, na.rm = TRUE)
+theta_grid   <- seq(-6, 6, length.out = 61)
+weights      <- dnorm(theta_grid, mean = higher_mean, sd = higher_sd)
+weights      <- weights / sum(weights)
+
+suppressWarnings({
+  dif_results <- purrr::map_dfr(colnames(dif_matrix_clean), function(item_nm) {
+    y    <- dif_matrix_clean[, item_nm]
+    seen <- !is.na(y)
+    
+    df_item <- data.frame(
+      score = y[seen],
+      theta = dif_theta[seen],
+      ses   = dif_ses[seen]
+    )
+    
+    # Model 0: Baseline 1PL (Score ~ Theta)
+    mod0 <- glm(score ~ theta, data = df_item, family = binomial)
+    # Model 1: Uniform DIF (Score ~ Theta + SES)
+    mod1 <- glm(score ~ theta + ses, data = df_item, family = binomial)
+    
+    # Likelihood Ratio Test
+    lrt   <- anova(mod0, mod1, test = "LRT")
+    p_val <- lrt$`Pr(>Chi)`[2]
+    
+    # Extract 1PL parameters from the GLM
+    coefs    <- coef(mod1)
+    a        <- coefs["theta"]
+    d_lower  <- coefs["(Intercept)"]
+    d_diff   <- if ("sesHigher_SES" %in% names(coefs)) coefs["sesHigher_SES"] else 0
+    d_higher <- d_lower + d_diff
+    
+    # Calculate Exact Expected Score Curves
+    p_lower    <- plogis(a * theta_grid + d_lower)
+    p_higher   <- plogis(a * theta_grid + d_higher)
+    diff_curve <- p_higher - p_lower
+    
+    tibble(
+      Item         = item_nm,
+      N_Lower_SES  = sum(df_item$ses == "Lower_SES"),
+      N_Higher_SES = sum(df_item$ses == "Higher_SES"),
+      p_val        = p_val,
+      d_Diff       = round(unname(d_diff), 4),
+      wABC         = round(sum(abs(diff_curve) * weights), 4),
+      ESSD         = round(sum(diff_curve * weights), 4)
+    )
+  })
+})
+
+
+# 4. ADJUST P-VALUES AND SUMMARIZE
+dif_results <- dif_results %>%
+  mutate(
+    adj_pvals = p.adjust(p_val, method = "BH"),
+    Favors = case_when(
+      adj_pvals >= 0.05 ~ "No Significant DIF",
+      ESSD > 0          ~ "Higher SES (Focal)",
+      ESSD < 0          ~ "Lower SES (Reference)",
+      TRUE              ~ "Neutral"
+    )
+  ) %>%
+  arrange(adj_pvals)
+
+# View all statistically significant DIF items (BH-adjusted p < 0.05)
+flagged_ses_dif <- dif_results %>%
+  filter(adj_pvals < 0.05) %>%
+  select(Item, N_Lower_SES, N_Higher_SES, p_val, adj_pvals, d_Diff, wABC, ESSD, Favors)
+
+print(flagged_ses_dif)
+
+
+# 5. DIF SEVERITY CLASSIFICATION & SUMMARY REPORT
+dif_summary <- dif_results %>%
+  mutate(
+    DIF_Severity = case_when(
+      adj_pvals >= 0.05 ~ "Not Significant",
+      wABC >= 0.20      ~ "Severe",
+      wABC >= 0.10      ~ "Moderate",
+      TRUE              ~ "Negligible"
+    )
+  )
+
+# 5a. Print High-Level Summary Counts
+severity_counts <- dif_summary %>%
+  dplyr::count(DIF_Severity, name = "Item_Count") %>%
+  arrange(match(DIF_Severity, c("Severe", "Moderate", "Negligible", "Not Significant")))
+
+cat("\n=== SES DIF OVERALL SUMMARY ===\n")
+print(knitr::kable(severity_counts))
+
+# 5b. Extract and Print Actionable Items (Moderate or Severe)
+actionable_items <- dif_summary %>%
+  filter(DIF_Severity %in% c("Moderate", "Severe")) %>%
+  arrange(desc(wABC)) %>%
+  select(Item, DIF_Severity, N_Lower_SES, N_Higher_SES, adj_pvals, d_Diff, wABC, Favors)
+
+cat("\n=== MODERATE & SEVERE ITEMS REQUIRING REVIEW ===\n")
+if (nrow(actionable_items) > 0) {
+  print(knitr::kable(actionable_items))
+} else {
+  cat("No items exhibited Moderate or Severe SES DIF. Any statistically significant items have negligible effect sizes.\n")
+}
+```
