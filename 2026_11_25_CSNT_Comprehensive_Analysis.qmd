@@ -1,41 +1,15 @@
 ---
-title: "CSNT Comprehensive_Psychometric Analysis"
+title: "CSNT (2025) Comprehensive Psychometric Analysis"
 format:
   html:
-    theme: flatly # Clean light background with high contrast dark text
+    theme: flatly
     toc: true
-    df-print: paged # Clean interactive paged tables
+    df-print: paged
 ---
-
-```{=html}
-<style>
-  /* Force tables to render with clean white background and black text */
-  table, .table, .pagedtable {
-    background-color: #ffffff !important;
-    color: #111111 !important;
-  }
-  
-  /* High-contrast dark header with bold white text */
-  th, .table th, .pagedtable-header {
-    background-color: #1a252f !important;
-    color: #ffffff !important;
-    font-weight: bold !important;
-  }
-
-  /* Force console output boxes to render bright high-vis text */
-  pre.code-output, div.cell-output-stdout pre {
-    background-color: #1e1e1e !important;
-    color: #00ff66 !important;
-    border: 1px solid #444444 !important;
-  }
-</style>
-```
 
 ------------------------------------------------------------------------
 
-### 
-
-## Loading necessary libraries
+### Load Libraries
 
 ```{r}
 #| message: false
@@ -57,45 +31,87 @@ library(WrightMap)
 library(writexl)
 ```
 
-```{css}
-/* 1. Style code blocks and console outputs */
-div.sourceCode, pre.sourceCode, .cell-output pre, .cell-output code {
-  background-color: #1e1e1e !important;
-  color: #f8f8f2 !important;
-  border-radius: 6px;
-}
+```{r}
 
-/* 2. Style standard Markdown and knitr/gt/kable tables */
-.table, table {
-  background-color: #ffffff !important;
-  color: #000000 !important;
-  --bs-table-bg: #ffffff !important;
-  --bs-table-color: #000000 !important;
-}
+#| echo: false
 
-.table thead th, table th {
-  background-color: #333333 !important;
-  color: #ffffff !important;
-}
+htmltools::tags$style(htmltools::HTML("
+  /* 1. Light, high-contrast code blocks and console outputs */
+  div.sourceCode, pre.sourceCode, .cell-output pre, .cell-output code {
+    background-color: #f4f6f9 !important;
+    color: #1e242b !important;
+    border: 1px solid #d6dde5 !important;
+    border-radius: 6px;
+  }
+
+  /* 2. Style Markdown and knitr::kable tables */
+  .table, table {
+    background-color: #ffffff !important;
+    color: #111111 !important;
+    --bs-table-bg: #ffffff !important;
+    --bs-table-color: #111111 !important;
+  }
+
+  .table thead th, table th {
+    background-color: #1a252f !important;
+    color: #ffffff !important;
+    font-weight: bold !important;
+  }
+"))
 ```
 
 ## 1. Data Preparation
 
 ### 1.a Data preparation before the analysis
 
+Full CSNT test data are extracted from GRID based on 'flags_form field, *which is the record against individual application*.
+
+'timecompleted' variable is chosen as the criterion date selection. fielddata is selected to refer to Subject ID.
+
+Two datasets were pulled from GRID, one for all the item, test level and diversity data. Second dataset contained vacancy information-grade and other diversity data.
+
+Annual data is between 01 January to 31 December based on timecompleted.
+
 File path is set to run from the desktop. Next, Data without 'timecompleted' are dropped so that incomplete test instances are not included in IRT analysis. This also decreases data sparsity.
 
 ```{r}
-CSNT_Item_Diversity_Scored <- read_excel("~/Desktop/Datasets/2026_10_22_CSNT_Item_Diversity_Scored.xlsx")
-CSNT_Item_Diversity_Scored <- CSNT_Item_Diversity_Scored %>%
-drop_na(timecompleted)
+#| label: env-file-check
+#| message: false
+#| warning: false
 
-write_xlsx(CSNT_Item_Diversity_Scored, "2026_10_22_CSNT_Item_Diversity_Scored.xlsx")
+cat("Working directory:", getwd(), "\n")
 
-CSNT_Item_Diversity_Scored <- CSNT_Item_Diversity_Scored[, !colAlls(is.na(CSNT_Item_Diversity_Scored))]
+p1 <- path.expand("~/Desktop/Datasets/2026_10_22_CSNT_Item_Diversity_Scored.xlsx")
+p2 <- path.expand("~/Desktop/Datasets/2026_10_22_CSNT_All_Grade_Type.csv")
 
-CSNT_All_Grade_Type <- read.csv("~/Desktop/Datasets/2026_10_22_CSNT_All_Grade_Type.csv")
-View(CSNT_All_Grade_Type)
+cat("Scored XLSX exists:", file.exists(p1), "| Size (MB):", round(file.info(p1)$size / 1e6, 2), "\n")
+cat("Grade CSV exists:  ", file.exists(p2), "| Size (MB):", round(file.info(p2)$size / 1e6, 2), "\n")
+```
+
+```{r}
+#| label: load-and-clean-datasets
+#| message: false
+#| warning: false
+
+# 1. READ RAW DATASETS WITHOUT OVERWRITING SOURCE FILES
+raw_scored_path <- path.expand("~/Desktop/Datasets/2026_10_22_CSNT_Item_Diversity_Scored.xlsx")
+raw_grade_path  <- path.expand("~/Desktop/Datasets/2026_10_22_CSNT_All_Grade_Type.csv")
+
+stopifnot(file.exists(raw_scored_path), file.exists(raw_grade_path))
+
+CSNT_Item_Diversity_Scored <- readxl::read_excel(raw_scored_path) %>%
+  tidyr::drop_na(timecompleted)
+
+# Drop columns that are completely NA across all rows
+all_na_cols <- vapply(CSNT_Item_Diversity_Scored, function(col) all(is.na(col)), logical(1))
+CSNT_Item_Diversity_Scored <- CSNT_Item_Diversity_Scored[, !all_na_cols, drop = FALSE]
+
+CSNT_All_Grade_Type <- utils::read.csv(raw_grade_path, stringsAsFactors = FALSE)
+
+cat(sprintf(
+  "Scored rows: %d | Grade/Type rows: %d\n",
+  nrow(CSNT_Item_Diversity_Scored), nrow(CSNT_All_Grade_Type)
+))
 ```
 
 (Added variables from the Otap_Vac table to get the grades and applicant types: Merge datasets based on fielddata). Data is merged here. This could add extra diversity data without test completions.
@@ -131,7 +147,7 @@ CSNT_Item_Diversity_Scored_2025<-filter(temp, timecompleted==2025)
 
 ### 1.b.1 Remove duplicate candidate instances based on 'timecompleted'
 
-While all may be completed test instances there may be multiple instances of test takers. SO, duplicates are dropped from the IRT analysis.
+While all may be completed test instances there may be multiple instances of test takers. So, duplicates are dropped from the IRT analysis based on column 'timecompleted'. First date is kept.
 
 ```{r}
 CSNT_Item_Diversity_Scored_2025 <- CSNT_Item_Diversity_Scored_2025 %>%
@@ -209,6 +225,62 @@ valid_rows_active <- rowSums(!is.na(clean_active_items2025)) > 0
 mirt_active_matrix <- clean_active_items2025[valid_rows_active, ]
 
 cat("Participants analyzed in mirt():", nrow(mirt_active_matrix), "\n")
+```
+
+### 1.b.6 Item acceptance limit
+
+```{r}
+#| label: item-sample-size-check
+#| message: false
+#| warning: false
+
+# 1. SET IRT THRESHOLD (200 = 1PL operational; 100 = 1PL pilot; 500 = 2PL)
+min_n_1pl <- 200
+
+# 2. IDENTIFY BINARY SCORED ITEM COLUMNS (0/1)
+is_binary_item <- function(x) {
+  vals <- stats::na.omit(suppressWarnings(as.numeric(as.character(x))))
+  length(vals) > 0 && all(vals %in% c(0, 1))
+}
+
+exclude_cols <- c("Theta_1PL", "Active_1PL_Theta", "NRTtheta", "NRT_Theta", "disability", "gender")
+candidate_cols <- setdiff(colnames(CSNT_Item_Diversity_Scored_2025), exclude_cols)
+item_cols <- candidate_cols[vapply(CSNT_Item_Diversity_Scored_2025[candidate_cols], is_binary_item, logical(1))]
+
+# 3. COUNT VALID RESPONSES & FLAG LOW-N OR EXTREME P-VALUE ITEMS
+item_n_summary <- purrr::map_dfr(item_cols, \(col) {
+  x <- suppressWarnings(as.numeric(as.character(CSNT_Item_Diversity_Scored_2025[[col]])))
+  valid_n <- sum(!is.na(x))
+  p_val   <- if (valid_n > 0) round(mean(x, na.rm = TRUE), 3) else NA_real_
+  
+  tibble::tibble(
+    Item            = col,
+    Valid_Responses = valid_n,
+    Missing_N       = sum(is.na(x)),
+    P_Value         = p_val,
+    Calibration_Status = dplyr::case_when(
+      valid_n < 100        ~ "CRITICAL: Below 1PL Pilot Minimum (n < 100)",
+      valid_n < min_n_1pl  ~ paste0("FLAG: Below 1PL Operational Threshold (n < ", min_n_1pl, ")"),
+      p_val < 0.05 | p_val > 0.95 ~ "WARNING: Extreme Difficulty (p < 0.05 or > 0.95)",
+      TRUE                 ~ "OK (Sufficient for 1PL)"
+    )
+  )
+}) %>%
+  dplyr::arrange(Valid_Responses)
+
+# 4. SUMMARY COUNTS & DISPLAY FLAGGED ITEMS
+flagged_items <- item_n_summary %>%
+  dplyr::filter(!stringr::str_starts(Calibration_Status, "OK"))
+
+cat(sprintf(
+  "Total items checked: %d | Ready for 1PL (n >= %d): %d | Flagged: %d\n",
+  nrow(item_n_summary),
+  min_n_1pl,
+  sum(stringr::str_starts(item_n_summary$Calibration_Status, "OK")),
+  nrow(flagged_items)
+))
+
+knitr::kable(flagged_items)
 ```
 
 ### 1.c Average Item Usage
@@ -289,86 +361,105 @@ For the purpose of IRT analysis, Rasch, 1PL and 2PL methods were tested to compa
 Rasch analysis was carried out with active items only.
 
 ```{r}
-# 1. FIT RASCH MODEL ON ACTIVE ITEMS
-fit_rasch <- mirt(
-  data     = mirt_active_matrix,
-  model    = 1,
-  itemtype = "Rasch",
-  SE       = TRUE,   # Required so parameter standard errors (SE_b) are actually computed
-  verbose  = FALSE
+#| label: rasch-analysis-calibration
+#| message: false
+#| warning: false
+
+min_n_rasch  <- 200
+item_valid_n <- colSums(!is.na(mirt_active_matrix))
+item_p_val   <- colMeans(mirt_active_matrix, na.rm = TRUE)
+valid_items  <- names(item_valid_n)[item_valid_n >= min_n_rasch & !is.na(item_p_val) & item_p_val > 0 & item_p_val < 1]
+
+stopifnot(length(valid_items) >= 2)
+
+cal_mat_rasch <- mirt_active_matrix[, valid_items, drop = FALSE]
+
+fit_rasch <- mirt::mirt(
+  cal_mat_rasch,
+  model = 1, itemtype = "Rasch", SE = TRUE, verbose = FALSE
 )
 
-cat("Rasch Model Converged:", extract.mirt(fit_rasch, "converged"), "\n")
+coef_list <- mirt::coef(fit_rasch, IRTpars = TRUE, printSE = TRUE)
+fit_stats <- suppressWarnings(mirt::itemfit(fit_rasch, fit_stats = c("infit", "X2")))
 
-# 2. EXTRACT ITEM PARAMETERS & STANDARD ERRORS SAFELY
-rasch_pars <- coef(fit_rasch, IRTpars = TRUE, simplify = TRUE)$items
+cal_df <- tibble::tibble(
+  Item         = valid_items,
+  Difficulty_b = round(vapply(valid_items, function(i) as.numeric(coef_list[[i]][1, "b"]), numeric(1)), 3),
+  SE_b         = round(vapply(valid_items, function(i) {
+    if ("SE" %in% rownames(coef_list[[i]])) as.numeric(coef_list[[i]]["SE", "b"]) else NA_real_
+  }, numeric(1)), 3),
+  Infit_MSQ    = round(as.numeric(fit_stats$infit), 3),
+  Z_Infit      = round(replace(as.numeric(fit_stats$z.infit), is.nan(fit_stats$z.infit), NA_real_), 3),
+  Outfit_MSQ   = round(as.numeric(fit_stats$outfit), 3),
+  Z_Outfit     = round(replace(as.numeric(fit_stats$z.outfit), is.nan(fit_stats$z.outfit), NA_real_), 3),
+  X2_p_value   = round(as.numeric(fit_stats$p.X2), 4)
+)
 
-# Extract SE for 'b' directly from the unsimplified coef list (simplify = TRUE drops SEs)
-rasch_coef_se <- coef(fit_rasch, IRTpars = TRUE, printSE = TRUE)
-rasch_se_b <- vapply(rownames(rasch_pars), function(itm) {
-  mat <- rasch_coef_se[[itm]]
-  if (!is.null(mat) && "SE" %in% rownames(mat)) as.numeric(mat["SE", "b"]) else NA_real_
-}, numeric(1))
+msq_flag <- ((pmin(fit_stats$infit, fit_stats$outfit, na.rm = TRUE) < 0.5) |
+             (pmax(fit_stats$infit, fit_stats$outfit, na.rm = TRUE) > 1.5))
 
-# 3. COMPUTE FIT STATISTICS (Infit, Outfit, X2)
-rasch_fit_infit <- itemfit(fit_rasch, fit_stats = "infit")
-rasch_fit_X2    <- itemfit(fit_rasch, fit_stats = "X2")
+cat(
+  "Calibrated:", length(valid_items),
+  "; Excluded:", ncol(mirt_active_matrix) - length(valid_items),
+  "; Converged:", mirt::extract.mirt(fit_rasch, "converged"),
+  "; MSQ Misfit:", sum(msq_flag, na.rm = TRUE),
+  "; X2 Misfit:", sum(fit_stats$p.X2 < 0.05, na.rm = TRUE), "\n"
+)
 
-rasch_fit_infit$z.infit[is.nan(rasch_fit_infit$z.infit)]   <- NA_real_
-rasch_fit_infit$z.outfit[is.nan(rasch_fit_infit$z.outfit)] <- NA_real_
-
-# 4. IDENTIFY MISFITTING ITEMS
-misfitting_msq <- rasch_fit_infit %>%
-  filter(outfit > 1.5 | infit > 1.5 | outfit < 0.5 | infit < 0.5)
-
-misfitting_p <- rasch_fit_X2 %>%
-  filter(p.X2 < 0.05)
-
-cat("Items misfitting by MSQ (<0.5 or >1.5):", nrow(misfitting_msq), "\n")
-cat("Items misfitting by Chi-Square (p < 0.05):", nrow(misfitting_p), "\n")
-
-# 5. BUILD CONSOLIDATED ITEM SUMMARY TABLE
 rasch_item_summary <- tibble::tibble(
-  Item         = rownames(rasch_pars),
-  Difficulty_b = round(as.numeric(rasch_pars[, "b"]), 3),
-  SE_b         = round(rasch_se_b, 3),
-  Infit_MSQ    = round(as.numeric(rasch_fit_infit$infit), 3),
-  Z_Infit      = round(as.numeric(rasch_fit_infit$z.infit), 3),
-  Outfit_MSQ   = round(as.numeric(rasch_fit_infit$outfit), 3),
-  Z_Outfit     = round(as.numeric(rasch_fit_infit$z.outfit), 3),
-  X2_p_value   = round(as.numeric(rasch_fit_X2$p.X2), 4)
-)
+  Item    = colnames(mirt_active_matrix),
+  Valid_N = as.integer(item_valid_n),
+  Status  = dplyr::case_when(
+    Item %in% valid_items      ~ "Calibrated",
+    item_valid_n < min_n_rasch ~ paste0("Insufficient Data (n < ", min_n_rasch, ")"),
+    TRUE                       ~ "Excluded (Zero Variance: p = 0 or 1)"
+  )
+) %>%
+  dplyr::left_join(cal_df, by = "Item")
 
-print(head(rasch_item_summary, 10))
+knitr::kable(head(rasch_item_summary, 15))
 ```
 
 ### 2.a. Person Theta scores 2025
 
 ```{r}
-# 1. EXTRACT THETA & STANDARD ERRORS ONCE (Reused by Wright Map & Export)}
-rasch_person_scores <- fscores(fit_rasch, method = "EAP", full.scores.SE = TRUE)
+#| label: rasch-person-scores
+#| message: false
+#| warning: false
 
-# 2. VERIFY ID VARIABLE & ALIGNED ROWS
+rasch_person_scores <- mirt::fscores(fit_rasch, method = "EAP", full.scores = TRUE, full.scores.SE = TRUE)
+
 id_var <- "fielddata"
 stopifnot(id_var %in% names(CSNT_Item_Diversity_Scored_2025))
 
-valid_rows_rasch <- rowSums(!is.na(clean_active_items2025)) > 0
-stopifnot(sum(valid_rows_rasch) == nrow(rasch_person_scores))
+# Align IDs directly with the rows of mirt_active_matrix / fit_rasch
+if (nrow(mirt_active_matrix) == nrow(CSNT_Item_Diversity_Scored_2025)) {
+  ids_rasch <- CSNT_Item_Diversity_Scored_2025[[id_var]]
+} else {
+  base_rows <- rowSums(!is.na(clean_active_items2025)) > 0
+  ids_rasch <- CSNT_Item_Diversity_Scored_2025[[id_var]][base_rows]
+}
 
-# 3. BUILD LOOKUP TABLE & MERGE INTO MASTER DATASET
+stopifnot(length(ids_rasch) == nrow(rasch_person_scores))
+
+has_cal_resp <- rowSums(!is.na(cal_mat_rasch)) > 0
+
 rasch_theta_df <- tibble::tibble(
-  !!id_var   := CSNT_Item_Diversity_Scored_2025[[id_var]][valid_rows_rasch],
-  Rasch_Theta = as.numeric(rasch_person_scores[, "F1"]),
-  Rasch_SE    = as.numeric(rasch_person_scores[, "SE_F1"])
-)
+  !!id_var    := ids_rasch,
+  Rasch_Theta  = ifelse(has_cal_resp, as.numeric(rasch_person_scores[, "F1"]), NA_real_),
+  Rasch_SE     = ifelse(has_cal_resp, as.numeric(rasch_person_scores[, "SE_F1"]), NA_real_)
+) %>%
+  dplyr::filter(!is.na(.data[[id_var]])) %>%
+  dplyr::distinct(.data[[id_var]], .keep_all = TRUE)
 
 CSNT_Item_Diversity_Scored_2025 <- CSNT_Item_Diversity_Scored_2025 %>%
   dplyr::select(-dplyr::any_of(c("Rasch_Theta", "Rasch_SE"))) %>%
-  dplyr::left_join(rasch_theta_df, by = id_var)
+  dplyr::left_join(rasch_theta_df, by = id_var, na_matches = "never")
 
 cat(sprintf(
-  "Successfully matched %d active Rasch scores back to %d master rows.\n",
-  nrow(rasch_theta_df),
+  "Scored & matched %d examinees (across %d calibrated items) to %d master rows.\n",
+  sum(!is.na(CSNT_Item_Diversity_Scored_2025$Rasch_Theta)),
+  length(valid_items),
   nrow(CSNT_Item_Diversity_Scored_2025)
 ))
 ```
@@ -376,34 +467,131 @@ cat(sprintf(
 Re-Check for item variance (6rows nonmatching due to NAs)
 
 ```{r}
-# 1. IDENTIFY ROWS WITHOUT A RASCH SCORE (OR MISSING ID)}
-rasch_unmatched <- CSNT_Item_Diversity_Scored_2025 %>%
-  filter(is.na(Rasch_Theta) | is.na(.data[[id_var]]))
+#| label: rasch-unmatched-check
+#| message: false
+#| warning: false
 
-cat("Unmatched / unscored rows:", nrow(rasch_unmatched), "\n")
+if (!exists("id_var")) id_var <- "fielddata"
+stopifnot(id_var %in% names(CSNT_Item_Diversity_Scored_2025), "Rasch_Theta" %in% names(CSNT_Item_Diversity_Scored_2025))
 
-# 2. CHECK RESPONSE VARIANCE ON THE EXACT ACTIVE ITEM COLUMNS
-if (nrow(rasch_unmatched) > 0) {
-  unmatched_items <- rasch_unmatched %>%
-    dplyr::select(dplyr::any_of(colnames(mirt_active_matrix)))
-  
-  row_variances <- apply(unmatched_items, 1, var, na.rm = TRUE)
-  print(row_variances)
+unmatched_idx <- which(
+  is.na(CSNT_Item_Diversity_Scored_2025$Rasch_Theta) |
+  is.na(CSNT_Item_Diversity_Scored_2025[[id_var]])
+)
+
+cat("Unmatched / unscored rows:", length(unmatched_idx), "\n")
+
+if (length(unmatched_idx) > 0) {
+  act_cols <- intersect(colnames(mirt_active_matrix), names(CSNT_Item_Diversity_Scored_2025))
+  cal_cols <- intersect(valid_items, act_cols)
+
+  all_mat <- do.call(cbind, lapply(
+    CSNT_Item_Diversity_Scored_2025[unmatched_idx, act_cols, drop = FALSE],
+    function(x) suppressWarnings(as.numeric(as.character(x)))
+  ))
+  cal_mat  <- all_mat[, cal_cols, drop = FALSE]
+  cal_n    <- rowSums(!is.na(cal_mat))
+  cal_mean <- rowMeans(cal_mat, na.rm = TRUE)
+  centered <- sweep(cal_mat, 1, cal_mean, "-")
+
+  unmatched_summary <- tibble::tibble(
+    Row          = unmatched_idx,
+    ID           = as.character(CSNT_Item_Diversity_Scored_2025[[id_var]][unmatched_idx]),
+    Active_N     = rowSums(!is.na(all_mat)),
+    Calibrated_N = cal_n,
+    Cal_Variance = ifelse(cal_n > 1, round(rowSums(centered^2, na.rm = TRUE) / (cal_n - 1), 3), NA_real_),
+    Reason       = dplyr::case_when(
+      is.na(ID)         ~ "Missing ID",
+      Active_N == 0     ~ "No active item responses",
+      Calibrated_N == 0 ~ "Answered excluded (low-N) items only",
+      TRUE              ~ "Duplicate / unmatched ID"
+    )
+  )
+
+  reason_counts <- unmatched_summary %>%
+    dplyr::count(Reason, name = "Rows")
+
+  print(knitr::kable(reason_counts, caption = "Summary of Unmatched / Unscored Rows"))
+  print(knitr::kable(utils::head(unmatched_summary, 20), caption = "First 20 Unmatched / Unscored Rows"))
 }
 ```
 
 ### 2.b. Person-Item Map (Wright Map) for fit_rasch
 
 ```{r}
-# Reuses rasch_person_scores (Chunk 2) and rasch_pars (Chunk 1) — no recomputation
-wrightMap(
-  thetas          = rasch_person_scores[, "F1"],
-  thresholds      = rasch_pars[, "b"],
-  main.title      = "Wright Map: Active Items vs. Person Ability (2025)",
-  axis.persons    = "Person Ability (Theta)",
-  axis.items      = "Item Difficulty (Logits)",
-  show.item.names = TRUE
+#| label: rasch-wright-map
+#| message: false
+#| warning: false
+#| fig-width: 9
+#| fig-height: 6
+
+stopifnot(exists("cal_df"), "Difficulty_b" %in% names(cal_df), "Item" %in% names(cal_df))
+
+cal_only <- dplyr::filter(cal_df, !is.na(Difficulty_b), !is.na(Item))
+rasch_b  <- as.numeric(cal_only$Difficulty_b)
+
+theta_vec <- if (exists("rasch_theta_df") && "Rasch_Theta" %in% names(rasch_theta_df)) {
+  rasch_theta_df$Rasch_Theta
+} else if (exists("CSNT_Item_Diversity_Scored_2025") && "Rasch_Theta" %in% names(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025$Rasch_Theta
+} else {
+  numeric(0)
+}
+
+valid_thetas <- as.numeric(stats::na.omit(theta_vec))
+stopifnot(length(rasch_b) > 0, length(valid_thetas) > 0)
+
+# Build combined dataset sharing one vertical Logit scale
+panel_levels <- c(
+  sprintf("Person Ability (N = %s)", format(length(valid_thetas), big.mark = ",")),
+  sprintf("Item Difficulty (K = %d)", length(rasch_b))
 )
+
+wright_df <- dplyr::bind_rows(
+  tibble::tibble(Logit = valid_thetas, Panel = panel_levels[1]),
+  tibble::tibble(Logit = rasch_b,      Panel = panel_levels[2])
+) %>%
+  dplyr::mutate(Panel = factor(Panel, levels = panel_levels))
+
+means_df <- tibble::tibble(
+  Panel = factor(panel_levels, levels = panel_levels),
+  Mean  = c(mean(valid_thetas), mean(rasch_b)),
+  Label = sprintf("Mean = %.2f", c(mean(valid_thetas), mean(rasch_b)))
+)
+
+ggplot2::ggplot(wright_df, ggplot2::aes(y = Logit)) +
+  ggplot2::geom_histogram(
+    ggplot2::aes(x = ggplot2::after_stat(density), fill = Panel),
+    bins = 35, alpha = 0.75, color = "white", linewidth = 0.25
+  ) +
+  ggplot2::geom_hline(
+    data = means_df,
+    ggplot2::aes(yintercept = Mean),
+    linetype = "dashed", color = "#1a252f", linewidth = 0.7
+  ) +
+  ggplot2::geom_text(
+    data = means_df,
+    ggplot2::aes(x = Inf, y = Mean, label = Label),
+    hjust = 1.1, vjust = -0.5, size = 3.5, fontface = "bold", color = "#1a252f"
+  ) +
+  ggplot2::facet_wrap(~ Panel, scales = "free_x") +
+  ggplot2::scale_fill_manual(values = c("#2c7fb8", "#d95f02")) +
+  ggplot2::labs(
+    title    = "Wright Map: Person Ability vs. Item Difficulty (2025)",
+    subtitle = sprintf(
+      "Targeting gap (Mean Person - Mean Item): %.2f logits",
+      mean(valid_thetas) - mean(rasch_b)
+    ),
+    x = "Density",
+    y = "Logit Scale (Theta / Difficulty b)"
+  ) +
+  ggplot2::theme_minimal(base_size = 12) +
+  ggplot2::theme(
+    legend.position  = "none",
+    strip.text       = ggplot2::element_text(face = "bold", size = 11),
+    panel.grid.minor = ggplot2::element_blank(),
+    plot.title       = ggplot2::element_text(face = "bold")
+  )
 ```
 
 The above graph shows the mismatch between candidate abilities and item difficulties in the item bank.
@@ -412,6 +600,9 @@ The above graph shows the mismatch between candidate abilities and item difficul
 
 ```{r}
 
+#| label: Export_rasch-Excel
+#| message: false
+#| warning: false
 # 1. PREPARE PARTICIPANT DATASET FOR EXPORT (Consistent Rasch_Theta / Rasch_SE names)}
 rasch_participant_export <- CSNT_Item_Diversity_Scored_2025 %>%
   dplyr::select(
@@ -457,172 +648,178 @@ When `mirt` encounters numerical instability during SE computation, it drops the
 **Failsafe Length Matching:** `se_a_vec` and `se_b_vec` are guaranteed to have exactly **320 elements** regardless of whether `mirt` successfully computed standard errors or returned `NULL`.
 
 ```{r}
-# 1. FIT 1PL MODEL ON ACTIVE ITEMS
-fit_1pl <- mirt(
-  data     = mirt_active_matrix,
+#| label: 1pl-calibration
+#| message: false
+#| warning: false
+
+# 1. FILTER ACTIVE ITEMS BY MINIMUM SAMPLE SIZE & VARIANCE
+min_n_1pl       <- 200
+item_valid_n    <- colSums(!is.na(mirt_active_matrix))
+item_p_val      <- colMeans(mirt_active_matrix, na.rm = TRUE)
+valid_items_1pl <- names(item_valid_n)[item_valid_n >= min_n_1pl & item_p_val > 0 & item_p_val < 1]
+
+fit_1pl <- mirt::mirt(
+  data     = mirt_active_matrix[, valid_items_1pl, drop = FALSE],
   model    = 1,
   itemtype = "1PL",
   SE       = TRUE,
   verbose  = FALSE
 )
 
-cat("1PL Model Converged:", extract.mirt(fit_1pl, "converged"), "\n")
+cat(
+  "1PL Calibrated:", length(valid_items_1pl),
+  "| Excluded:", ncol(mirt_active_matrix) - length(valid_items_1pl),
+  "| Converged:", mirt::extract.mirt(fit_1pl, "converged"), "\n"
+)
 
-# 2. EXTRACT ITEM PARAMETERS & STANDARD ERRORS SAFELY
-pars_1pl <- coef(fit_1pl, IRTpars = TRUE, simplify = TRUE)$items
+# 2. EXTRACT ITEM PARAMETERS, SEs & FIT STATS IN ONE PASS
+coef_se_1pl  <- mirt::coef(fit_1pl, IRTpars = TRUE, printSE = TRUE)
+item_fit_1pl <- suppressWarnings(mirt::itemfit(fit_1pl, fit_stats = "infit"))
 
-# Extract SEs from unsimplified coef list (simplify = TRUE drops SE rows in mirt)
-coef_se_1pl <- coef(fit_1pl, IRTpars = TRUE, printSE = TRUE)
-
-extract_se <- function(coef_list, items, par_name) {
+get_par <- function(items, row_nm, col_nm) {
   vapply(items, function(itm) {
-    mat <- coef_list[[itm]]
-    if (!is.null(mat) && "SE" %in% rownames(mat) && par_name %in% colnames(mat)) {
-      as.numeric(mat["SE", par_name])
+    mat <- coef_se_1pl[[itm]]
+    if (!is.null(mat) && row_nm %in% rownames(mat) && col_nm %in% colnames(mat)) {
+      as.numeric(mat[row_nm, col_nm])
     } else {
       NA_real_
     }
   }, numeric(1))
 }
 
-se_a_vec <- extract_se(coef_se_1pl, rownames(pars_1pl), "a")
-se_b_vec <- extract_se(coef_se_1pl, rownames(pars_1pl), "b")
-
-# 3. COMPUTE ITEM FIT STATISTICS
-item_fit_1pl <- itemfit(fit_1pl, fit_stats = "infit")
-
-# 4. BUILD CONSOLIDATED 1PL ITEM SUMMARY TABLE
-summary_1pl <- tibble::tibble(
-  Item         = rownames(pars_1pl),
-  Slope_a      = round(as.numeric(pars_1pl[, "a"]), 3),
-  SE_a         = round(se_a_vec, 3),
-  Difficulty_b = round(as.numeric(pars_1pl[, "b"]), 3),
-  SE_b         = round(se_b_vec, 3),
+cal_1pl_df <- tibble::tibble(
+  Item         = valid_items_1pl,
+  Slope_a      = round(get_par(valid_items_1pl, "par", "a"), 3),
+  SE_a         = round(get_par(valid_items_1pl, "SE",  "a"), 3),
+  Difficulty_b = round(get_par(valid_items_1pl, "par", "b"), 3),
+  SE_b         = round(get_par(valid_items_1pl, "SE",  "b"), 3),
   Infit_MSQ    = round(as.numeric(item_fit_1pl$infit), 3),
   Outfit_MSQ   = round(as.numeric(item_fit_1pl$outfit), 3)
 )
 
-print(head(summary_1pl, 10))
+# 3. BUILD MASTER 1PL ITEM SUMMARY TABLE (INCLUDING EXCLUDED ITEMS)
+summary_1pl <- tibble::tibble(
+  Item    = colnames(mirt_active_matrix),
+  Valid_N = as.integer(item_valid_n),
+  Status  = dplyr::case_when(
+    Item %in% valid_items_1pl ~ "Calibrated",
+    item_valid_n < min_n_1pl  ~ paste0("Insufficient Data (n < ", min_n_1pl, ")"),
+    TRUE                      ~ "Excluded (Zero Variance: p = 0 or 1)"
+  )
+) %>%
+  dplyr::left_join(cal_1pl_df, by = "Item")
 
-# 5. OVERALL DESCRIPTIVE SUMMARY FOR 1PL DIFFICULTY
+knitr::kable(head(summary_1pl, 15))
+
+# 4. OVERALL DESCRIPTIVE SUMMARY (CALIBRATED ITEMS ONLY)
 summary_stats_1pl <- tibble::tibble(
   Metric = c(
-    "Total Items", "Common Slope (a)", "Mean Difficulty (b)",
-    "SD Difficulty", "Min Difficulty", "Max Difficulty", "Median Difficulty"
+    "Total Active Items", "Calibrated Items", "Excluded Items",
+    "Common Slope (a)", "Mean Difficulty (b)", "SD Difficulty",
+    "Min Difficulty", "Max Difficulty", "Median Difficulty"
   ),
   Value = c(
     nrow(summary_1pl),
-    round(mean(summary_1pl$Slope_a, na.rm = TRUE), 4),
-    round(mean(summary_1pl$Difficulty_b, na.rm = TRUE), 4),
-    round(sd(summary_1pl$Difficulty_b, na.rm = TRUE), 4),
-    round(min(summary_1pl$Difficulty_b, na.rm = TRUE), 4),
-    round(max(summary_1pl$Difficulty_b, na.rm = TRUE), 4),
-    round(median(summary_1pl$Difficulty_b, na.rm = TRUE), 4)
+    nrow(cal_1pl_df),
+    nrow(summary_1pl) - nrow(cal_1pl_df),
+    round(mean(cal_1pl_df$Slope_a, na.rm = TRUE), 4),
+    round(mean(cal_1pl_df$Difficulty_b, na.rm = TRUE), 4),
+    round(stats::sd(cal_1pl_df$Difficulty_b, na.rm = TRUE), 4),
+    round(min(cal_1pl_df$Difficulty_b, na.rm = TRUE), 4),
+    round(max(cal_1pl_df$Difficulty_b, na.rm = TRUE), 4),
+    round(stats::median(cal_1pl_df$Difficulty_b, na.rm = TRUE), 4)
   )
 )
 
-cat("\n=== 1PL ITEM DIFFICULTY SUMMARY STATS ===\n")
-print(knitr::kable(summary_stats_1pl))
+knitr::kable(summary_stats_1pl, caption = "1PL Item Difficulty Summary Statistics")
 ```
 
 ### 3.b Extracting Person ability and SEs
 
 ```{r}
 
-# 1. EXTRACT PERSON ABILITY (THETA) & SE ONCE (Reused by Plots & Export)
-fscores_1pl <- fscores(fit_1pl, method = "EAP", full.scores.SE = TRUE)
+#| label: 1pl-person-scores
+#| message: false
+#| warning: false
 
-# 2. VERIFY ID VARIABLE & EXACT ROW ALIGNMENT
-id_var    <- "fielddata"
-item_cols <- colnames(mirt_active_matrix)
-stopifnot(id_var %in% names(CSNT_Item_Diversity_Scored_2025))
+fscores_1pl <- mirt::fscores(fit_1pl, method = "EAP", full.scores = TRUE, full.scores.SE = TRUE)
 
-scored_rows <- rowSums(!is.na(CSNT_Item_Diversity_Scored_2025[, item_cols])) > 0
+id_var      <- "fielddata"
+scored_rows <- rowSums(!is.na(CSNT_Item_Diversity_Scored_2025[, colnames(mirt_active_matrix), drop = FALSE])) > 0
+has_cal_1pl <- rowSums(!is.na(mirt_active_matrix[, valid_items_1pl, drop = FALSE])) > 0
 
-cat("Master rows:", nrow(CSNT_Item_Diversity_Scored_2025), "\n")
-cat("Non-empty rows found:", sum(scored_rows), "\n")
-cat("fscores_1pl rows:", nrow(fscores_1pl), "\n")
-stopifnot(sum(scored_rows) == nrow(fscores_1pl))
+stopifnot(id_var %in% names(CSNT_Item_Diversity_Scored_2025), sum(scored_rows) == nrow(fscores_1pl))
 
-# 3. BUILD LOOKUP TABLE & MERGE INTO MASTER DATASET
 theta_1pl_df <- tibble::tibble(
   !!id_var := CSNT_Item_Diversity_Scored_2025[[id_var]][scored_rows],
-  Theta_1PL = as.numeric(fscores_1pl[, "F1"]),
-  SE_1PL    = as.numeric(fscores_1pl[, "SE_F1"])
-)
+  Theta_1PL = ifelse(has_cal_1pl, as.numeric(fscores_1pl[, "F1"]), NA_real_),
+  SE_1PL    = ifelse(has_cal_1pl, as.numeric(fscores_1pl[, "SE_F1"]), NA_real_)
+) %>%
+  dplyr::filter(!is.na(.data[[id_var]])) %>%
+  dplyr::distinct(.data[[id_var]], .keep_all = TRUE)
 
 CSNT_Item_Diversity_Scored_2025 <- CSNT_Item_Diversity_Scored_2025 %>%
   dplyr::select(-dplyr::any_of(c("Theta_1PL", "SE_1PL"))) %>%
-  dplyr::left_join(theta_1pl_df, by = id_var)
+  dplyr::left_join(theta_1pl_df, by = id_var, na_matches = "never")
 
-cat("Successfully merged", sum(!is.na(CSNT_Item_Diversity_Scored_2025$Theta_1PL)), "1PL scores!\n")
+cat("Merged", sum(!is.na(CSNT_Item_Diversity_Scored_2025$Theta_1PL)), "calibrated 1PL scores.\n")
 ```
 
 ### 3.c 1PL Diagnostic Plots & Targeting Alignment (ICC + Person Density)
 
 ```{r}
 
-# 1. STANDARD MIRT DIAGNOSTIC PLOTS
-plot(fit_1pl, type = "trace",     main = "1PL Item Trace Lines")
-plot(fit_1pl, type = "infotrace", main = "1PL Item Information Curves")
-plot(fit_1pl, type = "infoSE",    main = "1PL Test Information & SE")
+#| label: 1pl-diagnostics-alignment
+#| message: false
+#| warning: false
+#| fig-width: 9
+#| fig-height: 6
 
-# 2. TARGETING ALIGNMENT PLOT (Reuses fscores_1pl & pars_1pl — no recomputation)
-person_thetas_1pl <- as.numeric(fscores_1pl[, "F1"])
-person_df_1pl     <- tibble::tibble(theta = person_thetas_1pl)
+library(ggplot2)
+library(patchwork)
 
-a_common   <- as.numeric(pars_1pl[1, "a"])
-b_params   <- pars_1pl[, "b"]
-theta_grid <- seq(-4, 4, length.out = 200)
+# 1. TEST-LEVEL INFORMATION & CONDITIONAL SE (Essential CAT diagnostic)
+plot(fit_1pl, type = "infoSE", main = "1PL Test Information & Conditional SE")
 
-icc_data_1pl <- tidyr::expand_grid(
-  item_id = names(b_params),
-  theta   = theta_grid
-) %>%
-  mutate(
-    b    = b_params[item_id],
-    prob = plogis(a_common * (theta - b))  # Uses actual 1PL slope 'a'
-  )
+# 2. TARGETING ALIGNMENT PLOT (Uses filtered cal_1pl_df & valid Theta_1PL)
+a_common     <- cal_1pl_df$Slope_a[1]
+valid_thetas <- tibble::tibble(theta = stats::na.omit(theta_1pl_df$Theta_1PL))
 
-p_icc <- ggplot(icc_data_1pl, aes(x = theta, y = prob, group = item_id)) +
+icc_data_1pl <- tidyr::expand_grid(Item = cal_1pl_df$Item, theta = seq(-4, 4, length.out = 200)) %>%
+  dplyr::left_join(cal_1pl_df[, c("Item", "Difficulty_b")], by = "Item") %>%
+  dplyr::mutate(prob = stats::plogis(a_common * (theta - Difficulty_b)))
+
+clean_theme <- theme_minimal(base_size = 11) + theme(panel.grid.minor = element_blank())
+
+p_icc <- ggplot(icc_data_1pl, aes(theta, prob, group = Item)) +
   geom_line(alpha = 0.45, color = "#2b5c8f", linewidth = 0.6) +
   geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey40") +
-  scale_x_continuous(limits = c(-4, 4), breaks = seq(-4, 4, 1)) +
-  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  scale_x_continuous(limits = c(-4, 4), breaks = -4:4) +
   labs(
-    title    = "1PL Targeting Alignment: Item Curves vs. Person Ability Distribution",
-    subtitle = sprintf("Dashed line = P(0.5) threshold (b); common 1PL slope a = %.3f", a_common),
-    x        = NULL,
-    y        = "Probability P(Theta)"
+    title    = "1PL Targeting Alignment: Calibrated Item Curves vs. Person Ability",
+    subtitle = sprintf("Items = %d | Common slope a = %.3f | Dashed line = P(0.5) difficulty threshold", nrow(cal_1pl_df), a_common),
+    x = NULL, y = "P(Theta)"
   ) +
-  theme_minimal(base_size = 11) +
-  theme(
-    axis.text.x      = element_blank(),
-    panel.grid.minor = element_blank()
-  )
+  clean_theme +
+  theme(axis.text.x = element_blank())
 
-p_density <- ggplot(person_df_1pl, aes(x = theta)) +
+p_dens <- ggplot(valid_thetas, aes(theta)) +
   geom_density(fill = "#e07a5f", color = "#c45d42", alpha = 0.6, adjust = 1.2) +
-  geom_vline(
-    xintercept = mean(person_thetas_1pl, na.rm = TRUE),
-    color = "#8b2610", linetype = "dashed", linewidth = 0.8
-  ) +
-  scale_x_continuous(limits = c(-4, 4), breaks = seq(-4, 4, 1)) +
+  geom_vline(xintercept = mean(valid_thetas$theta), color = "#8b2610", linetype = "dashed", linewidth = 0.8) +
+  scale_x_continuous(limits = c(-4, 4), breaks = -4:4) +
   scale_y_continuous(expand = expansion(mult = c(0, 0.05))) +
-  labs(
-    x = "Latent Trait Ability (1PL Theta)",
-    y = "Person Density"
-  ) +
-  theme_minimal(base_size = 11) +
-  theme(panel.grid.minor = element_blank())
+  labs(x = "Latent Trait Ability (1PL Theta)", y = "Density") +
+  clean_theme
 
-combined_plot_1pl <- p_icc / p_density + plot_layout(heights = c(3, 1))
-print(combined_plot_1pl)
+p_icc / p_dens + plot_layout(heights = c(3, 1))
 ```
 
 ### 3.d Export Report to Excel for Records
 
 ```{r}
+#| label: export_1pl-excel
+#| message: false
+#| warning: false
 
 # 1. PREPARE PARTICIPANT EXPORT (Consistent Theta_1PL / SE_1PL column names)
 participant_export_1pl <- CSNT_Item_Diversity_Scored_2025 %>%
@@ -656,20 +853,43 @@ cat("Successfully exported multi-tab 1PL workbook to:", excel_file_1pl, "\n")
 
 ### 4.a. IRT 2PL Model
 
-First steps
+First steps. Items with less than 500 responses are dropeed as per guidance.
 
 ```{r}
-# 1. REMOVE ZERO-VARIANCE ITEMS & ANY RESULTING ALL-NA ROWS
-item_vars       <- apply(mirt_active_matrix, 2, var, na.rm = TRUE)
-mirt_2pl_matrix <- mirt_active_matrix[, !is.na(item_vars) & item_vars > 0, drop = FALSE]
-mirt_2pl_matrix <- mirt_2pl_matrix[rowSums(!is.na(mirt_2pl_matrix)) > 0, , drop = FALSE]
+#| label: 2pl-calibration
+#| message: false
+#| warning: false
 
-cat("Items retained for 2PL:", ncol(mirt_2pl_matrix), "of", ncol(mirt_active_matrix), "\n")
-cat("Respondents retained for 2PL:", nrow(mirt_2pl_matrix), "\n")
+# 1. FILTER ACTIVE ITEMS BY 2PL SAMPLE SIZE THRESHOLD & NON-ZERO VARIANCE
+min_n_2pl       <- 500  # Operational 2PL minimum (use 250-300 for pilot/pretest items)
+id_var          <- "fielddata"
+item_valid_n    <- colSums(!is.na(mirt_active_matrix))
+item_vars       <- apply(mirt_active_matrix, 2, stats::var, na.rm = TRUE)
 
-# 2. FIT 2PL MODEL ON CLEAN MATRIX
-# Note: SE = FALSE is kept for speed/stability on sparse CAT data
-fit_2pl <- mirt(
+valid_items_2pl <- names(item_valid_n)[
+  item_valid_n >= min_n_2pl & !is.na(item_vars) & item_vars > 0
+]
+
+if (length(valid_items_2pl) < 2) {
+  stop(sprintf(
+    "Only %d item(s) met min_n_2pl = %d. Consider lowering min_n_2pl to 250 for pilot 2PL analysis.",
+    length(valid_items_2pl), min_n_2pl
+  ))
+}
+
+# Subset columns, then drop examinees who have 0 responses across retained 2PL items
+mirt_2pl_sub    <- mirt_active_matrix[, valid_items_2pl, drop = FALSE]
+keep_rows_2pl   <- rowSums(!is.na(mirt_2pl_sub)) > 0
+mirt_2pl_matrix <- mirt_2pl_sub[keep_rows_2pl, , drop = FALSE]
+
+cat(sprintf(
+  "2PL Calibrated Items: %d of %d | Excluded: %d | Respondents Retained: %d\n",
+  ncol(mirt_2pl_matrix), ncol(mirt_active_matrix),
+  ncol(mirt_active_matrix) - ncol(mirt_2pl_matrix), nrow(mirt_2pl_matrix)
+))
+
+# 2. FIT 2PL MODEL (SE = FALSE kept for speed/stability on sparse CAT data)
+fit_2pl <- mirt::mirt(
   data      = mirt_2pl_matrix,
   model     = 1,
   itemtype  = "2PL",
@@ -680,14 +900,13 @@ fit_2pl <- mirt(
   verbose   = FALSE
 )
 
-cat("2PL Model Converged:", extract.mirt(fit_2pl, "converged"), "\n")
+cat("2PL Model Converged:", mirt::extract.mirt(fit_2pl, "converged"), "\n")
 
-# 3. EXTRACT ITEM PARAMETERS (SLOPE 'a' & DIFFICULTY 'b')
-pars_2pl <- coef(fit_2pl, IRTpars = TRUE, simplify = TRUE)$items
+# 3. EXTRACT PARAMETERS & Zh ITEM FIT SAFELY
+pars_2pl <- mirt::coef(fit_2pl, IRTpars = TRUE, simplify = TRUE)$items
 
-# 4. COMPUTE ITEM FIT STATISTICS SAFELY (Zh WITH FAILSAFE)
 item_fit_2pl <- tryCatch(
-  itemfit(fit_2pl, fit_stats = "Zh", na.rm = TRUE),
+  suppressWarnings(mirt::itemfit(fit_2pl, fit_stats = "Zh", na.rm = TRUE)),
   error = function(e) {
     warning("Zh item fit bypassed: ", conditionMessage(e))
     NULL
@@ -700,85 +919,92 @@ zh_vec <- if (!is.null(item_fit_2pl) && "Zh" %in% colnames(item_fit_2pl)) {
   rep(NA_real_, nrow(pars_2pl))
 }
 
-# 5. BUILD CONSOLIDATED 2PL ITEM SUMMARY TABLE
-summary_2pl <- tibble::tibble(
+cal_2pl_df <- tibble::tibble(
   Item         = rownames(pars_2pl),
   Slope_a      = round(as.numeric(pars_2pl[, "a"]), 3),
   Difficulty_b = round(as.numeric(pars_2pl[, "b"]), 3),
   Zh_Fit       = zh_vec
 )
 
-print(head(summary_2pl, 10))
+# 4. BUILD MASTER 2PL ITEM SUMMARY TABLE (INCLUDING EXCLUDED ITEMS)
+summary_2pl <- tibble::tibble(
+  Item    = colnames(mirt_active_matrix),
+  Valid_N = as.integer(item_valid_n),
+  Status  = dplyr::case_when(
+    Item %in% valid_items_2pl ~ "Calibrated",
+    item_valid_n < min_n_2pl  ~ paste0("Insufficient Data (n < ", min_n_2pl, ")"),
+    TRUE                      ~ "Excluded (Zero Variance: p = 0 or 1)"
+  )
+) %>%
+  dplyr::left_join(cal_2pl_df, by = "Item")
 
-# 6. OVERALL DESCRIPTIVE SUMMARY FOR 2PL PARAMETERS
+knitr::kable(head(summary_2pl, 15))
+
+# 5. OVERALL DESCRIPTIVE SUMMARY (CALIBRATED 2PL ITEMS ONLY)
 summary_stats_2pl <- tibble::tibble(
   Metric = c(
-    "Total Items",
+    "Total Active Items", "Calibrated 2PL Items", "Excluded Items",
     "Mean Slope (a)", "SD Slope (a)", "Min Slope (a)", "Max Slope (a)",
-    "Mean Difficulty (b)", "SD Difficulty (b)", "Min Difficulty (b)", "Max Difficulty (b)", "Median Difficulty (b)"
+    "Mean Difficulty (b)", "SD Difficulty (b)", "Min Difficulty (b)",
+    "Max Difficulty (b)", "Median Difficulty (b)"
   ),
   Value = c(
     nrow(summary_2pl),
-    round(mean(summary_2pl$Slope_a, na.rm = TRUE), 4),
-    round(sd(summary_2pl$Slope_a, na.rm = TRUE), 4),
-    round(min(summary_2pl$Slope_a, na.rm = TRUE), 4),
-    round(max(summary_2pl$Slope_a, na.rm = TRUE), 4),
-    round(mean(summary_2pl$Difficulty_b, na.rm = TRUE), 4),
-    round(sd(summary_2pl$Difficulty_b, na.rm = TRUE), 4),
-    round(min(summary_2pl$Difficulty_b, na.rm = TRUE), 4),
-    round(max(summary_2pl$Difficulty_b, na.rm = TRUE), 4),
-    round(median(summary_2pl$Difficulty_b, na.rm = TRUE), 4)
+    nrow(cal_2pl_df),
+    nrow(summary_2pl) - nrow(cal_2pl_df),
+    round(mean(cal_2pl_df$Slope_a, na.rm = TRUE), 4),
+    round(stats::sd(cal_2pl_df$Slope_a, na.rm = TRUE), 4),
+    round(min(cal_2pl_df$Slope_a, na.rm = TRUE), 4),
+    round(max(cal_2pl_df$Slope_a, na.rm = TRUE), 4),
+    round(mean(cal_2pl_df$Difficulty_b, na.rm = TRUE), 4),
+    round(stats::sd(cal_2pl_df$Difficulty_b, na.rm = TRUE), 4),
+    round(min(cal_2pl_df$Difficulty_b, na.rm = TRUE), 4),
+    round(max(cal_2pl_df$Difficulty_b, na.rm = TRUE), 4),
+    round(stats::median(cal_2pl_df$Difficulty_b, na.rm = TRUE), 4)
   )
 )
 
-cat("\n=== 2PL ITEM PARAMETER SUMMARY STATS ===\n")
-print(knitr::kable(summary_stats_2pl))
+knitr::kable(summary_stats_2pl, caption = "2PL Item Parameter Summary Statistics")
 ```
 
 ```{r}
 
-# 1. COMPUTE EAP PERSON SCORES & SE ONCE
-fscores_2pl <- fscores(
-  fit_2pl,
-  method         = "EAP",
-  full.scores    = TRUE,
-  full.scores.SE = TRUE
-)
+#| label: 2pl-person-scores
+#| message: false
+#| warning: false
 
-# 2. VERIFY ID VARIABLE & EXACT ROW ALIGNMENT ON MASTER DATASET
-id_var        <- "fielddata"
-items_2pl     <- colnames(mirt_2pl_matrix)
-stopifnot(id_var %in% names(CSNT_Item_Diversity_Scored_2025))
+# 1. EXTRACT 2PL EAP SCORES & STANDARD ERRORS
+fscores_2pl <- mirt::fscores(fit_2pl, method = "EAP", full.scores = TRUE, full.scores.SE = TRUE)
 
-scored_rows_2pl <- rowSums(!is.na(CSNT_Item_Diversity_Scored_2025[, items_2pl, drop = FALSE])) > 0
+# 2. ALIGN IDS WITH RETAINED 2PL MATRIX ROWS
+base_active_ids <- if (nrow(mirt_active_matrix) == nrow(CSNT_Item_Diversity_Scored_2025)) {
+  CSNT_Item_Diversity_Scored_2025[[id_var]]
+} else {
+  CSNT_Item_Diversity_Scored_2025[[id_var]][rowSums(!is.na(clean_active_items2025)) > 0]
+}
 
-cat("Master rows:", nrow(CSNT_Item_Diversity_Scored_2025), "\n")
-cat("Non-empty 2PL rows found:", sum(scored_rows_2pl), "\n")
-cat("fscores_2pl rows:", nrow(fscores_2pl), "\n")
-stopifnot(sum(scored_rows_2pl) == nrow(fscores_2pl))
+ids_2pl <- base_active_ids[keep_rows_2pl]
+stopifnot(length(ids_2pl) == nrow(fscores_2pl))
 
-# 3. BUILD LOOKUP TABLE & LEFT-JOIN INTO MASTER DATASET (Consistent Theta_2PL / SE_2PL)
+# 3. BUILD UNIQUE LOOKUP TABLE & MERGE INTO MASTER DATASET
 theta_2pl_df <- tibble::tibble(
-  !!id_var := CSNT_Item_Diversity_Scored_2025[[id_var]][scored_rows_2pl],
+  !!id_var := ids_2pl,
   Theta_2PL = as.numeric(fscores_2pl[, "F1"]),
   SE_2PL    = as.numeric(fscores_2pl[, "SE_F1"])
-)
+) %>%
+  dplyr::filter(!is.na(.data[[id_var]])) %>%
+  dplyr::distinct(.data[[id_var]], .keep_all = TRUE)
 
 CSNT_Item_Diversity_Scored_2025 <- CSNT_Item_Diversity_Scored_2025 %>%
-  dplyr::select(-dplyr::any_of(c("Theta_2PL", "SE_2PL", "Active_2PL_Theta", "Active_2PL_SE"))) %>%
-  dplyr::left_join(theta_2pl_df, by = id_var)
+  dplyr::select(-dplyr::any_of(c("Theta_2PL", "SE_2PL"))) %>%
+  dplyr::left_join(theta_2pl_df, by = id_var, na_matches = "never")
 
-cat("Successfully merged", sum(!is.na(CSNT_Item_Diversity_Scored_2025$Theta_2PL)), "2PL scores!\n")
-
-# 4. ALIGNMENT CHECK (Both vectors derived from the exact same master rows)
-raw_scores_2pl <- rowSums(CSNT_Item_Diversity_Scored_2025[, items_2pl, drop = FALSE], na.rm = TRUE)
-alignment_corr <- cor(
-  raw_scores_2pl[scored_rows_2pl],
-  CSNT_Item_Diversity_Scored_2025$Theta_2PL[scored_rows_2pl],
-  use = "complete.obs"
-)
-
-cat("Alignment Check — Correlation between Raw Sum Score and 2PL Theta:", round(alignment_corr, 4), "\n")
+cat(sprintf(
+  "Merged %d calibrated 2PL scores across %d items into %d master rows.\n",
+  sum(!is.na(CSNT_Item_Diversity_Scored_2025$Theta_2PL)),
+  length(valid_items_2pl),
+  nrow(CSNT_Item_Diversity_Scored_2025)
+))
 ```
 
 ```{r}
@@ -794,6 +1020,9 @@ Includes checking for row matches in the new form of the dataset as the `valid_r
 ### 4.c. Export Report to Excel
 
 ```{r}
+#| label: export-2PL-excel
+#| message: false
+#| warning: false
 # 1. PREPARE PARTICIPANT EXPORT
 participant_export_2pl <- CSNT_Item_Diversity_Scored_2025 %>%
   dplyr::select(
@@ -827,6 +1056,9 @@ cat("Successfully exported multi-tab 2PL workbook to:", excel_file_2pl, "\n")
 This compares the current item difficulties to the new 1PL item difficulties.
 
 ```{r}
+#| label: item_parameter_drift_graph
+#| message: false
+#| warning: false
 # 1. LOAD 2021 ITEM PARAMETERS FROM EXCEL
 df_2021_params <- read_excel("~/Desktop/Datasets/2026_CSNT_ItemParameter2021_Usage2026.xlsx", sheet = "Sheet1") %>%
   mutate(Item_id = str_trim(as.character(Item_id))) %>%
@@ -920,6 +1152,10 @@ print(p_scatter)
 Correlation between Theta_1PL and Total_correct (raw correct)
 
 ```{r}
+#| label: Correlation-between-Theta_1PL-Total_correct-(raw correct)
+#| message: false
+#| warning: false
+
 cor_result <- cor.test(
   CSNT_Item_Diversity_Scored_2025$Theta_1PL, 
   CSNT_Item_Diversity_Scored_2025$total_correct_1, 
@@ -944,6 +1180,9 @@ Using `auto.prior = TRUE` handles this internally without needing manual paramet
 When a 2PL Item Response Theory (IRT) model fails to converge—especially in large item sets or when dealing with sparse response patterns—it is almost always caused by **extreme parameter estimates** (slopes $a \to \infty$ or $a \le 0$) or **high correlation between items(AI)**.
 
 ```{r}
+#| label: unidimensionality-comparison
+#| message: false
+#| warning: false
 # Set seed for reproducible sampling & scoring
 set.seed(42)
 
@@ -1086,7 +1325,7 @@ q3_summary_df <- data.frame(
 cat("\n=== LOCAL INDEPENDENCE SUMMARY (2PL) ===\n")
 print(q3_summary_df)
 
-# ==============================================================================
+# ======================================================================
 # STEP 6: EXTRACT ITEM PARAMETERS & PERSON SCORES FOR 2PL
 
 # 1. Summary table for 2PL item parameters
@@ -1143,14 +1382,13 @@ alignment_corr <- cor(
 
 cat("Alignment Check — Correlation between Raw Sum Score and 2PL Theta:", round(alignment_corr, 4), "\n")
 
-
-# ==============================================================================
+# ======================================================================
 # STEP 7: DIAGNOSTIC PLOTS
 plot(fit_2pl, type = 'trace', main = '2PL Item Trace Lines')
 plot(fit_2pl, type = 'infotrace', main = '2PL Item Information Curves')
 plot(fit_2pl, type = 'infoSE', main = 'Test Information & SE')
 
-# ==============================================================================
+# ======================================================================
 # STEP 8: EXCEL EXPORT VIA OPENXLSX
 cat("\nExporting results to Excel workbook...\n")
 
@@ -1201,6 +1439,9 @@ To see which specific items are violating local independence, run this block to 
 In Yen's $Q_3$ analysis, centering $Q_3$ values around their average (since the expected value of $Q_3$ under local independence is slightly negative, approx. $-1/(N_{\text{items}}-1)$) is often standard practice, but evaluating raw $Q_3 > 0.20$ or adjusted $Q_3^* > 0.20$ directly identifies the worst offending pairs.)
 
 ```{r}
+#| label: item-pair-correlations
+#| message: false
+#| warning: false
 # 1. PROCESS Q3 MATRIX INTO DISTINCT PAIRS
 # ==============================================================================
 q3_long <- as.data.frame(as.table(q3_matrix)) %>%
@@ -1265,7 +1506,7 @@ if (nrow(violating_items_summary) > 0) {
   cat("No items flagged.\n")
 }
 
-# ==============================================================================
+# ======================================================================
 # 5. EXPORT RESULTS TO EXCEL FOR ITEM SELECTION & PRUNING
 
 wb_q3 <- createWorkbook()
@@ -1307,7 +1548,9 @@ cat("==================================================================\n")
 | **Q3 Violations** | Pairwise $Q_3 < 0.20$ | Residual correlations above $0.20$ point to pairs of items that violate local independence (suggesting secondary dimensions). |
 
 ```{r}
- 
+ #| label: model-performance-comparison
+#| message: false
+#| warning: false
 # 1. Verify convergence for all three models (Should all return TRUE)
 cat("Rasch Converged:", extract.mirt(fit_rasch, 'converged'), "\n")
 cat("1PL Converged:  ", extract.mirt(fit_1pl, 'converged'), "\n")
@@ -1321,78 +1564,174 @@ model_comp <- anova(fit_rasch, fit_1pl, fit_2pl)
 kable(model_comp, caption = "Model Fit Comparison: Rasch vs 1PL vs 2PL")
 ```
 
+Model comparison is made based on the separate model estimations, separate number of items. Exact match of items (meeting the 500 response limits for 2PL) produce the following results:
+
+```{r}
+#| label: irt-model-comparison-aligned
+#| message: false
+#| warning: false
+
+# 1. BUILD ONE SHARED MATRIX FOR ALL THREE MODELS (IDENTICAL ITEMS & ROWS)
+min_n_cmp <- 500
+
+item_n_cmp   <- colSums(!is.na(mirt_active_matrix))
+item_var_cmp <- apply(mirt_active_matrix, 2, stats::var, na.rm = TRUE)
+cmp_items    <- names(item_n_cmp)[item_n_cmp >= min_n_cmp & !is.na(item_var_cmp) & item_var_cmp > 0]
+
+stopifnot(length(cmp_items) >= 2)
+
+mirt_cmp_sub    <- mirt_active_matrix[, cmp_items, drop = FALSE]
+keep_rows_cmp   <- rowSums(!is.na(mirt_cmp_sub)) > 0
+mirt_cmp_matrix <- mirt_cmp_sub[keep_rows_cmp, , drop = FALSE]
+
+cat(sprintf(
+  "Shared comparison matrix: %d respondents x %d items (min N >= %d)\n",
+  nrow(mirt_cmp_matrix), ncol(mirt_cmp_matrix), min_n_cmp
+))
+
+# 2. DEFINE TRUE 1PL MODEL (EQUAL SLOPES 'a1' ACROSS ALL ITEMS, FREE LATENT VARIANCE)
+n_cmp_items <- ncol(mirt_cmp_matrix)
+spec_1pl <- mirt::mirt.model(sprintf(
+  "F = 1-%d
+   CONSTRAIN = (1-%d, a1)
+   COV = F1*F1",
+  n_cmp_items, n_cmp_items
+))
+
+# 3. FIT RASCH, TRUE 1PL, AND 2PL ON THE EXACT SAME DATA
+fit_cmp_rasch <- mirt::mirt(
+  data = mirt_cmp_matrix, model = 1, itemtype = "Rasch",
+  quadpts = 21, TOL = 0.001, technical = list(NCYCLES = 2000), verbose = FALSE
+)
+
+fit_cmp_1pl <- mirt::mirt(
+  data = mirt_cmp_matrix, model = spec_1pl, itemtype = "2PL",
+  quadpts = 21, TOL = 0.001, technical = list(NCYCLES = 2000), verbose = FALSE
+)
+
+fit_cmp_2pl <- mirt::mirt(
+  data = mirt_cmp_matrix, model = 1, itemtype = "2PL",
+  quadpts = 21, TOL = 0.001, technical = list(NCYCLES = 2000), verbose = FALSE
+)
+
+# 4. PAIRWISE LIKELIHOOD-RATIO COMPARISON USING mirt::anova()
+lr_rasch_2pl <- mirt::anova(fit_cmp_rasch, fit_cmp_2pl, verbose = FALSE)
+lr_1pl_2pl   <- mirt::anova(fit_cmp_1pl,   fit_cmp_2pl, verbose = FALSE)
+
+cmp_table <- tibble::tibble(
+  Model     = c("Rasch", "True 1PL (Equal Slopes)", "2PL"),
+  Converged = c(
+    mirt::extract.mirt(fit_cmp_rasch, "converged"),
+    mirt::extract.mirt(fit_cmp_1pl,   "converged"),
+    mirt::extract.mirt(fit_cmp_2pl,   "converged")
+  ),
+  AIC       = round(c(lr_rasch_2pl$AIC[1],   lr_1pl_2pl$AIC[1],   lr_rasch_2pl$AIC[2]), 1),
+  SABIC     = round(c(lr_rasch_2pl$SABIC[1], lr_1pl_2pl$SABIC[1], lr_rasch_2pl$SABIC[2]), 1),
+  HQ        = round(c(lr_rasch_2pl$HQ[1],    lr_1pl_2pl$HQ[1],    lr_rasch_2pl$HQ[2]), 1),
+  BIC       = round(c(lr_rasch_2pl$BIC[1],   lr_1pl_2pl$BIC[1],   lr_rasch_2pl$BIC[2]), 1),
+  logLik    = round(c(lr_rasch_2pl$logLik[1],lr_1pl_2pl$logLik[1],lr_rasch_2pl$logLik[2]), 1),
+  X2_vs_2PL = round(c(lr_rasch_2pl$X2[2],    lr_1pl_2pl$X2[2],    NA_real_), 2),
+  df_vs_2PL = c(lr_rasch_2pl$df[2],          lr_1pl_2pl$df[2],          NA_integer_),
+  p_vs_2PL  = c(
+    ifelse(is.na(lr_rasch_2pl$p[2]), NA_character_, format.pval(lr_rasch_2pl$p[2], digits = 3, eps = 0.001)),
+    ifelse(is.na(lr_1pl_2pl$p[2]),   NA_character_, format.pval(lr_1pl_2pl$p[2],   digits = 3, eps = 0.001)),
+    NA_character_
+  )
+)
+
+knitr::kable(cmp_table, caption = sprintf("Aligned 2025 IRT Model Comparison (N >= %d items)", min_n_cmp))
+```
+
+This aligned comparison gives clearer picture of three models. Rasch and 1PL model have identical fit indices. 2PL has a substantially better model fit than both Rasch and 1PL because item discrimination parameter varies across (common) items. This means using just difficulty parameter is not able to capture how the items separate high and low ability candidates. Because $\chi^2$ is sensitive to large sample sizesBIC and SABIC are the main parameters to consider.
+
 ### Compare Item Discrimination & Difficulty Parameters
 
 ```{r}
-# Extract item parameters across models
-pars_rasch <- coef(fit_rasch, IRTpars = TRUE, simplify = TRUE)$items
-pars_1pl   <- coef(fit_1pl,   IRTpars = TRUE, simplify = TRUE)$items
-pars_2pl   <- coef(fit_2pl,   IRTpars = TRUE, simplify = TRUE)$items
+#| label: model-parameter-comparison
+#| message: false
+#| warning: false
 
-# Combine into a comparative data frame
-item_comparison <- data.frame(
-  Item             = rownames(pars_rasch),
-  Rasch_a          = pars_rasch[, "a"],
-  Rasch_b          = pars_rasch[, "b"],
-  `1PL_a`          = pars_1pl[, "a"],
-  `1PL_b`          = pars_1pl[, "b"],
-  `2PL_a`          = pars_2pl[, "a"],
-  `2PL_b`          = pars_2pl[, "b"]
-)
+# 1. HELPER TO EXTRACT KEYED ITEM PARAMETERS SAFELY
+extract_irt_df <- function(fit_obj, prefix) {
+  pars <- mirt::coef(fit_obj, IRTpars = TRUE, simplify = TRUE)$items
+  tibble::tibble(
+    Item                   = rownames(pars),
+    !!paste0(prefix, "_a") := round(as.numeric(pars[, "a"]), 3),
+    !!paste0(prefix, "_b") := round(as.numeric(pars[, "b"]), 3)
+  )
+}
+
+df_rasch <- extract_irt_df(fit_rasch, "Rasch")
+df_1pl   <- extract_irt_df(fit_1pl,   "1PL")
+df_2pl   <- extract_irt_df(fit_2pl,   "2PL")
+
+cat(sprintf(
+  "2025 Examinees: %d | Calibrated Items -> Rasch: %d | 1PL: %d | 2PL: %d\n",
+  nrow(mirt_active_matrix), nrow(df_rasch), nrow(df_1pl), nrow(df_2pl)
+))
+
+# 2. ALIGN ALL THREE MODELS BY ITEM ID ON THE 2025 MASTER ITEM LIST
+item_comparison <- tibble::tibble(
+  Item    = colnames(mirt_active_matrix),
+  Valid_N = as.integer(colSums(!is.na(mirt_active_matrix)))
+) %>%
+  dplyr::left_join(df_rasch, by = "Item") %>%
+  dplyr::left_join(df_1pl,   by = "Item") %>%
+  dplyr::left_join(df_2pl,   by = "Item")
+
+knitr::kable(head(item_comparison, 15))
 ```
 
 ### Extract & Merge Person Theta ($\theta$) Scores for All 3 Models
 
 ```{r}
-# 1. Extract raw EAP theta vectors from each fitted model
-scores_rasch <- as.numeric(fscores(fit_rasch, method = "EAP")[, "F1"])
-scores_1pl   <- as.numeric(fscores(fit_1pl,   method = "EAP")[, "F1"])
-scores_2pl   <- as.numeric(fscores(fit_2pl,   method = "EAP")[, "F1"])
+#| label: theta-cross-model-comparison
+#| message: false
+#| warning: false
 
-# 2. Identify the exact row positions scored by mirt
-# (Uses clean_matrix to find rows with valid responses and non-zero variance)
-scored_indices <- which(
-  rowSums(!is.na(clean_matrix)) > 0 & 
-  apply(clean_matrix, 1, var, na.rm = TRUE) > 0
+theta_cols <- intersect(
+  c("Rasch_Theta", "Theta_1PL", "Theta_2PL"),
+  names(CSNT_Item_Diversity_Scored_2025)
 )
 
-# Safety fallback if length differs slightly
-if (length(scored_indices) != length(scores_2pl)) {
-  scored_indices <- which(rowSums(!is.na(clean_matrix)) > 0)[1:length(scores_2pl)]
-}
+stopifnot(length(theta_cols) >= 2)
 
-# 3. Assign theta scores directly into Master Dataset (1:1 positional mapping)
-# Unscored/zero-variance rows cleanly receive NA
-CSNT_Item_Diversity_Scored_2025 <- CSNT_Item_Diversity_Scored_2025 %>%
-  dplyr::select(-any_of(c("Theta_Rasch", "Theta_1PL", "Theta_2PL"))) %>%
-  mutate(
-    Theta_Rasch = NA_real_,
-    Theta_1PL   = NA_real_,
-    Theta_2PL   = NA_real_
-  )
+theta_mat <- CSNT_Item_Diversity_Scored_2025[, theta_cols, drop = FALSE]
 
-CSNT_Item_Diversity_Scored_2025$Theta_Rasch[scored_indices] <- scores_rasch
-CSNT_Item_Diversity_Scored_2025$Theta_1PL[scored_indices]   <- scores_1pl
-CSNT_Item_Diversity_Scored_2025$Theta_2PL[scored_indices]   <- scores_2pl
-
-# 4. Check correlation among person abilities across models
-theta_correlations <- cor(
-  CSNT_Item_Diversity_Scored_2025 %>% 
-    dplyr::select(Theta_Rasch, Theta_1PL, Theta_2PL), 
-  use = "pairwise.complete.obs"
-)
-
-cat("\n=== CORRELATION AMONG PERSON THETA ESTIMATES ===\n")
+# 1. CORRELATION MATRIX ACROSS MODELS
+theta_correlations <- stats::cor(theta_mat, use = "pairwise.complete.obs")
+cat("=== CORRELATION AMONG PERSON THETA ESTIMATES ===\n")
 print(round(theta_correlations, 4))
+
+# 2. PAIRWISE MEAN ABSOLUTE & ROOT MEAN SQUARE DIFFERENCES (PRACTICAL AGREEMENT)
+pairs_df <- utils::combn(theta_cols, 2, simplify = FALSE)
+diff_summary <- do.call(rbind, lapply(pairs_df, function(p) {
+  x <- theta_mat[[p[1]]]
+  y <- theta_mat[[p[2]]]
+  ok <- !is.na(x) & !is.na(y)
+  data.frame(
+    Pair = paste(p[1], "vs.", p[2]),
+    N    = sum(ok),
+    r    = round(stats::cor(x[ok], y[ok]), 4),
+    MAE  = round(mean(abs(x[ok] - y[ok])), 4),
+    RMSE = round(sqrt(mean((x[ok] - y[ok])^2)), 4),
+    stringsAsFactors = FALSE
+  )
+}))
+
+knitr::kable(diff_summary, caption = "Person Ability (Theta) Agreement Across Models")
 ```
 
 Matching with ID key again to check for any changes
 
 fielddata(subjectID) to UserID
 
-ITem Deifficulty COmparison
+Item Difficulty Comparison
 
 ```{r}
+#| label: item-difficulty-comparison-old1pl-new1pl
+#| message: false
+#| warning: false
 # ===================================================================
 # 1. SUMMARY COMPARISON OF AVERAGE ITEM DIFFICULTY (RASCH vs 1PL vs 2PL)
 
@@ -1486,6 +1825,10 @@ Adverse impact analysis has been carried out based on current percentiles to sta
 6.  Frequencies of Diversity Groups
 
 ```{r}
+#| label: Frequencies of Diversity Groups
+#| message: false
+#| warning: false
+
 # 1. Convert Master Dataset to a clean standard data.frame
 df_clean <- as.data.frame(CSNT_Item_Diversity_Scored_2025)
 
@@ -1588,6 +1931,10 @@ for (demo in demographic_vars) {
 #### Current Percentile Overall Pass Rates per Grade
 
 ```{r}
+#| label: Current Percentile Overall Pass Rates per Grade
+#| message: false
+#| warning: false
+
 clean_vector_col <- function(x) {
   if (is.null(x)) return(NULL)
   if (is.list(x)) {
@@ -1947,6 +2294,10 @@ No adverse impact is present for Disability. Insufficient Data is presented wher
 ### 6.C Ethnicity
 
 ```{r}
+#| label: ethnicity-adverse-impact-1pl
+#| message: false
+#| warning: false
+
 # 1. SETUP & FILTER DATASET (ETHNICITY - 1PL ONLY)
 target_grades <- c("Administrative Officer", "Executive Officer", "Higher Executive Office",
                    "Senior Executive Office", "Grade7", "Grade 6")
@@ -2120,6 +2471,10 @@ Adverse impact for ethnicity starts at 19th percentile for Grade 6 and, 91th per
 ### 6.D Sexual Orientation
 
 ```{r}
+#| label: sexual-orientation-adverse-impact-1pl
+#| message: false
+#| warning: false
+
 # 1. SETUP & FILTER DATASET (SEXUAL ORIENTATION - 1PL ONLY)
 target_grades <- c("Administrative Officer", "Executive Officer", "Higher Executive Office",
                    "Senior Executive Office", "Grade7", "Grade 6")
@@ -2287,6 +2642,10 @@ Where data is available, Adverse Impact starts at 89th percentile for Executive 
 ### 6.E Age
 
 ```{r}
+#| label: age-adverse-impact-1pl
+#| message: false
+#| warning: false
+
 # 1. SETUP & FILTER DATASET (AGE - 1PL ONLY)
 target_grades <- c("Administrative Officer", "Executive Officer", "Higher Executive Office",
                    "Senior Executive Office", "Grade7", "Grade 6")
@@ -2455,6 +2814,10 @@ Adverse Impact for age starts at 99th percentile for grade Executive Officer. Th
 ### 6.F Religion
 
 ```{r}
+#| label: religion-adverse-impact-1pl
+#| message: false
+#| warning: false
+
 # 1. SETUP & FILTER DATASET (RELIGION OR BELIEF - 1PL ONLY)
 target_grades <- c("Administrative Officer", "Executive Officer", "Higher Executive Office",
                    "Senior Executive Office", "Grade7", "Grade 6")
@@ -2636,6 +2999,10 @@ Adverse Impact starts at 92th percentile for Administrative Officer. There is no
 ### 6.G SES Socio-Economic Status
 
 ```{r}
+#| label: socioeconomic-status-adverse-impact-1pl
+#| message: false
+#| warning: false
+
 # 1. SETUP & FILTER DATASET (SES - 1PL ONLY)
 target_grades <- c("Administrative Officer", "Executive Officer", "Higher Executive Office",
                    "Senior Executive Office", "Grade7", "Grade 6")
@@ -2831,6 +3198,10 @@ Minimum number of 30 responses per group is used for the basis of DIF analysis f
 (GEMINI) *LR-DIF conditions on the pre-computed Theta and tests if Gender predicts getting the item right using a standard `glm()`. **This is mathematically equivalent to the 1PL uniform DIF test**, returns the exact same effect sizes (wABC, ESSD, and log-odds shift), natively handles extreme CAT sparsity, and **runs instantly without hanging.***
 
 ```{r}
+#| label: Gender-differential-item-functioning-1pl
+#| message: false
+#| warning: false
+
 # 0. ENSURE THETA IS AVAILABLE
 if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
   CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
@@ -3004,6 +3375,10 @@ if (nrow(actionable_items) > 0) {
 ### 7.B Disability
 
 ```{r}
+#| label: Disability-differential-item-functioning-1pl
+#| message: false
+#| warning: false
+
 # 0. ENSURE THETA IS AVAILABLE
 if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
   CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
@@ -3169,6 +3544,10 @@ if (nrow(actionable_items) > 0) {
 ### 7.C Ethnicity
 
 ```{r}
+#| label: Ethnicity-differential-item-functioning-1pl
+#| message: false
+#| warning: false
+
 # 0. ENSURE THETA IS AVAILABLE
 if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
   CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
@@ -3348,6 +3727,10 @@ if (nrow(actionable_items) > 0) {
 ### 7.D Sexual Orientation
 
 ```{r}
+#| label: Sexual-orientation-differential-item-functioning-1pl
+#| message: false
+#| warning: false
+
 # 0. ENSURE THETA IS AVAILABLE
 if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
   CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
@@ -3522,6 +3905,11 @@ if (nrow(actionable_items) > 0) {
 ### 7.E Age
 
 ```{r}
+#| label: Age-differential-item-functioning-1pl
+#| message: false
+#| warning: false
+
+
 # 0. ENSURE THETA IS AVAILABLE
 if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
   CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
@@ -3696,6 +4084,11 @@ if (nrow(actionable_items) > 0) {
 Christian reference group. Other belief or religions focal group
 
 ```{r}
+#| label: Religion-differential-item-functioning-1pl
+#| message: false
+#| warning: false
+
+
 # 0. ENSURE THETA IS AVAILABLE
 if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
   CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
@@ -3873,6 +4266,10 @@ if (nrow(actionable_items) > 0) {
 Reference group Lower SES, focal group Higher SES
 
 ```{r}
+#| label: Socioeconomic-differential-item-functioning-1pl
+#| message: false
+#| warning: false
+
 # 0. ENSURE THETA IS AVAILABLE
 if (!"Theta_1PL" %in% colnames(CSNT_Item_Diversity_Scored_2025)) {
   CSNT_Item_Diversity_Scored_2025$Theta_1PL <- CSNT_Item_Diversity_Scored_2025$Active_1PL_Theta
